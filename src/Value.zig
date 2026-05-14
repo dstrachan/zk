@@ -86,7 +86,17 @@ pub fn format(self: *Value, w: *Io.Writer, vm: *Vm) !void {
         .char => |value| try w.print("\"{c}\"", .{value}),
         .char_list => |value| {
             if (value.len == 1) try w.writeByte(',');
-            try w.print("\"{s}\"", .{value});
+            try w.writeByte('"');
+            for (value) |b| switch (b) {
+                '\n' => try w.writeAll("\\n"),
+                '\r' => try w.writeAll("\\r"),
+                '\t' => try w.writeAll("\\t"),
+                '\\' => try w.writeAll("\\\\"),
+                '"' => try w.writeAll("\\\""),
+                ' ', '!', '#'...'[', ']'...'~' => try w.writeByte(b),
+                else => unreachable, // TODO: Implement octal characters in tokenizer
+            };
+            try w.writeByte('"');
         },
         .symbol => |value| try w.print("`{s}", .{vm.internedString(value)}),
         .symbol_list => |value| {
