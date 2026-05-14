@@ -18,6 +18,7 @@ pub const Error = Allocator.Error || std.fmt.ParseIntError || std.zig.ErrorBundl
 
 io: Io,
 gpa: Allocator,
+stdout: *Io.Writer,
 tree: *const Ast = undefined,
 apply_unary: bool = false,
 string_bytes: std.ArrayList(u8) = .empty,
@@ -32,25 +33,26 @@ stack_top: usize = 0,
 unary_primitives: [std.meta.fields(UnaryPrimitive).len]*Value = undefined,
 operators: [std.meta.fields(Operator).len]*Value = undefined,
 
-pub fn init(io: Io, gpa: Allocator) !*Vm {
+pub fn init(io: Io, gpa: Allocator, stdout: *Io.Writer) !*Vm {
     const vm = try gpa.create(Vm);
     errdefer vm.deinit();
     vm.* = .{
         .io = io,
         .gpa = gpa,
+        .stdout = stdout,
     };
 
     var unary_primitives_created: usize = 0;
     errdefer for (0..unary_primitives_created) |i| vm.unary_primitives[i].deref(vm.gpa);
     inline for (&vm.unary_primitives, 0..) |*unary_primitive, i| {
-        unary_primitive.* = try vm.createUnaryPrimitive(@enumFromInt(i));
+        unary_primitive.* = try vm.createValue(.unary_primitive, @enumFromInt(i));
         unary_primitives_created += 1;
     }
 
     var operators_created: usize = 0;
     errdefer for (0..operators_created) |i| vm.operators[i].deref(vm.gpa);
     inline for (&vm.operators, 0..) |*operator, i| {
-        operator.* = try vm.createOperator(@enumFromInt(i));
+        operator.* = try vm.createValue(.operator, @enumFromInt(i));
         operators_created += 1;
     }
 
@@ -67,19 +69,19 @@ pub fn deinit(vm: *Vm) void {
     vm.gpa.destroy(vm);
 }
 
-pub fn compile(vm: *Vm, tree: *const Ast) !*Value {
+fn parseTree(vm: *Vm, tree: *const Ast) !*Value {
     vm.tree = tree;
-    return vm.compileNode(.root);
+    return vm.parseNode(.root);
 }
 
 pub fn evalTree(vm: *Vm, tree: *const Ast) !*Value {
-    const val = try vm.compile(tree);
-    defer val.deref(vm.gpa);
-    return vm.eval(val);
+    const value = try vm.parseTree(tree);
+    defer value.deref(vm.gpa);
+    return vm.eval(value);
 }
 
-fn push(vm: *Vm, val: *Value) void {
-    vm.stack[vm.stack_top] = val;
+fn push(vm: *Vm, value: *Value) void {
+    vm.stack[vm.stack_top] = value;
     vm.stack_top += 1;
 }
 
@@ -110,38 +112,38 @@ fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
                     switch (args[0].as) {
                         .list => {},
                         .boolean => {
-                            const val = try vm.createBooleanList(args.len);
+                            const value = try vm.allocValue(.boolean_list, args.len);
                             errdefer comptime unreachable;
-                            for (val.as.boolean_list, args) |*v, a| v.* = a.as.boolean;
-                            return val;
+                            for (value.as.boolean_list, args) |*v, a| v.* = a.as.boolean;
+                            return value;
                         },
                         .boolean_list => {},
                         .long => {
-                            const val = try vm.createLongList(args.len);
+                            const value = try vm.allocValue(.long_list, args.len);
                             errdefer comptime unreachable;
-                            for (val.as.long_list, args) |*v, a| v.* = a.as.long;
-                            return val;
+                            for (value.as.long_list, args) |*v, a| v.* = a.as.long;
+                            return value;
                         },
                         .long_list => {},
                         .float => {
-                            const val = try vm.createFloatList(args.len);
+                            const value = try vm.allocValue(.float_list, args.len);
                             errdefer comptime unreachable;
-                            for (val.as.float_list, args) |*v, a| v.* = a.as.float;
-                            return val;
+                            for (value.as.float_list, args) |*v, a| v.* = a.as.float;
+                            return value;
                         },
                         .float_list => {},
                         .char => {
-                            const val = try vm.createCharList(args.len);
+                            const value = try vm.allocValue(.char_list, args.len);
                             errdefer comptime unreachable;
-                            for (val.as.char_list, args) |*v, a| v.* = a.as.char;
-                            return val;
+                            for (value.as.char_list, args) |*v, a| v.* = a.as.char;
+                            return value;
                         },
                         .char_list => {},
                         .symbol => {
-                            const val = try vm.createSymbolList(args.len);
+                            const value = try vm.allocValue(.symbol_list, args.len);
                             errdefer comptime unreachable;
-                            for (val.as.symbol_list, args) |*v, a| v.* = a.as.symbol;
-                            return val;
+                            for (value.as.symbol_list, args) |*v, a| v.* = a.as.symbol;
+                            return value;
                         },
                         .symbol_list => {},
                         .unary_primitive => {},
@@ -149,895 +151,42 @@ fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
                     }
                 }
 
-                const val = try vm.createList(args.len);
+                const value = try vm.allocValue(.list, args.len);
                 errdefer comptime unreachable;
-                for (val.as.list, args) |*v, a| v.* = a.ref();
-                return val;
+                for (value.as.list, args) |*v, a| v.* = a.ref();
+                return value;
             }
 
             if (args.len > 1) return error.rank;
+            switch (unary_primitive) {
+                inline else => |t| return @field(zk.unary_primitives, @tagName(t))(vm, args[0]),
+            }
             return vm.applyUnaryPrimitive(unary_primitive, args[0]);
         },
         .operator => |operator| {
             if (args.len > 2) return error.rank;
             if (args.len == 1) return error.nyi;
-            return vm.applyOperator(operator, args[0], args[1]);
+            switch (operator) {
+                inline else => |t| return @field(zk.operators, @tagName(t))(vm, args[0], args[1]),
+            }
         },
     }
-
-    return vm.createFloat(0);
 }
 
-//
-// Unary primitives
-//
-
-fn applyUnaryPrimitive(vm: *Vm, unary_primitive: UnaryPrimitive, x: *Value) !*Value {
-    switch (unary_primitive) {
-        .identity => return vm.identity(x),
-        .flip => return vm.flip(x),
-        .neg => return vm.neg(x),
-        .first => return vm.first(x),
-        .reciprocal => return vm.reciprocal(x),
-        .where => return vm.where(x),
-        .reverse => return vm.reverse(x),
-        .null => return vm.null(x),
-        .group => return vm.group(x),
-        .asc => return vm.asc(x),
-        .desc => return vm.desc(x),
-        .string => return vm.string(x),
-        .list => return vm.list(x),
-        .count => return vm.count(x),
-        .lower => return vm.lower(x),
-        .not => return vm.not(x),
-        .key => return vm.key(x),
-        .distinct => return vm.distinct(x),
-        .type => return vm.type(x),
-        .value => return vm.value(x),
-        .read_text => return vm.readText(x),
-        .read_binary => return vm.readBinary(x),
-    }
-}
-
-fn identity(_: *Vm, x: *Value) !*Value {
+pub fn show(vm: *Vm, x: *Value) !*Value {
+    std.log.debug("show", .{});
+    try vm.stdout.print("{f}\n", .{x.alt(vm)});
+    try vm.stdout.flush();
     return x.ref();
 }
 
-fn flip(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+pub fn stringify(vm: *Vm, x: *Value) !*Value {
+    const slice = try std.fmt.allocPrint(vm.gpa, "{f}", .{x.alt(vm)});
+    errdefer vm.gpa.free(slice);
+    return vm.createValue(.char_list, slice);
 }
 
-fn neg(vm: *Vm, x: *Value) !*Value {
-    switch (x.as) {
-        .list => |val| {
-            const v = try vm.createList(val.len);
-            var i: usize = 0;
-            errdefer {
-                for (v.as.list[0..i]) |elem| elem.deref(vm.gpa);
-                vm.gpa.destroy(v);
-            }
-            for (v.as.list, val) |*vv, elem| {
-                vv.* = try vm.neg(elem);
-                i += 1;
-            }
-            return v;
-        },
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => |val| return vm.createLong(-val),
-        .long_list => |val| {
-            const v = try vm.createLongList(val.len);
-            errdefer v.deref(vm.gpa);
-            for (v.as.long_list, val) |*vv, elem| vv.* = -elem;
-            return v;
-        },
-        .float => |val| return vm.createFloat(-val),
-        .float_list => |val| {
-            const v = try vm.createFloatList(val.len);
-            errdefer v.deref(vm.gpa);
-            for (v.as.float_list, val) |*vv, elem| vv.* = -elem;
-            return v;
-        },
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.type,
-        .symbol_list => return error.type,
-        .unary_primitive => return error.type,
-        .operator => return error.type,
-    }
-}
-
-fn first(vm: *Vm, x: *Value) !*Value {
-    switch (x.as) {
-        .list => |val| return val[0].ref(),
-        .boolean => return x.ref(),
-        .boolean_list => |val| return vm.createBoolean(val[0]),
-        .long => return x.ref(),
-        .long_list => |val| return vm.createLong(val[0]),
-        .float => return x.ref(),
-        .float_list => |val| return vm.createFloat(val[0]),
-        .char => return x.ref(),
-        .char_list => |val| return vm.createChar(val[0]),
-        .symbol => return x.ref(),
-        .symbol_list => |val| return vm.createSymbol(val[0]),
-        .unary_primitive => return x.ref(),
-        .operator => return x.ref(),
-    }
-}
-
-fn reciprocal(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn where(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn reverse(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn @"null"(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn group(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn asc(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn desc(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn string(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn list(vm: *Vm, x: *Value) !*Value {
-    switch (x.as) {
-        .list => {
-            const v = try vm.createList(1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
-        .boolean => |val| {
-            const v = try vm.createBooleanList(1);
-            errdefer comptime unreachable;
-            v.as.boolean_list[0] = val;
-            return v;
-        },
-        .boolean_list => {
-            const v = try vm.createList(1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
-        .long => |val| {
-            const v = try vm.createLongList(1);
-            errdefer comptime unreachable;
-            v.as.long_list[0] = val;
-            return v;
-        },
-        .long_list => {
-            const v = try vm.createList(1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
-        .float => |val| {
-            const v = try vm.createFloatList(1);
-            errdefer comptime unreachable;
-            v.as.float_list[0] = val;
-            return v;
-        },
-        .float_list => {
-            const v = try vm.createList(1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
-        .char => |val| {
-            const v = try vm.createCharList(1);
-            errdefer comptime unreachable;
-            v.as.char_list[0] = val;
-            return v;
-        },
-        .char_list => {
-            const v = try vm.createList(1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
-        .symbol => |val| {
-            const v = try vm.createSymbolList(1);
-            errdefer comptime unreachable;
-            v.as.symbol_list[0] = val;
-            return v;
-        },
-        .symbol_list => {
-            const v = try vm.createList(1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
-        .unary_primitive => {
-            const v = try vm.createList(1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
-        .operator => {
-            const v = try vm.createList(1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
-    }
-}
-
-fn count(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn lower(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn not(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn key(vm: *Vm, x: *Value) !*Value {
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => |val| {
-            if (val < 0) return error.domain;
-            const long_list = try vm.createLongList(@intCast(val));
-            errdefer comptime unreachable;
-            for (long_list.as.long_list, 0..) |*v, i| v.* = @intCast(i);
-            return long_list;
-        },
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn distinct(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn @"type"(vm: *Vm, x: *Value) !*Value {
-    return vm.createLong(@intFromEnum(x.as));
-}
-
-fn value(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn readText(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn readBinary(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-//
-// Operators
-//
-
-fn applyOperator(vm: *Vm, operator: Operator, x: *Value, y: *Value) !*Value {
-    switch (operator) {
-        .assign => unreachable,
-        .add => return vm.add(x, y),
-        .subtract => return vm.subtract(x, y),
-        .multiply => return vm.multiply(x, y),
-        .divide => return vm.divide(x, y),
-        .@"and" => return vm.@"and"(x, y),
-        .@"or" => return vm.@"or"(x, y),
-        .fill => return vm.fill(x, y),
-        .equals => return vm.equals(x, y),
-        .less_than => return vm.lessThan(x, y),
-        .greater_than => return vm.greaterThan(x, y),
-        .cast => return vm.cast(x, y),
-        .join => return vm.join(x, y),
-        .take => return vm.take(x, y),
-        .drop => return vm.drop(x, y),
-        .match => return vm.match(x, y),
-        .dict => return vm.dict(x, y),
-        .find => return vm.find(x, y),
-        .apply_at => return vm.applyAt(x, y),
-        .apply => return vm.apply(x, y),
-        .file_text => return vm.fileText(x, y),
-        .file_binary => return vm.fileBinary(x, y),
-        .dynamic_load => return vm.dynamicLoad(x, y),
-    }
-}
-
-fn add(vm: *Vm, x: *Value, y: *Value) !*Value {
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => |x_val| switch (y.as) {
-            .list => return error.nyi,
-            .boolean => return error.nyi,
-            .boolean_list => return error.nyi,
-            .long => |y_val| return vm.createLong(x_val + y_val),
-            .long_list => return error.nyi,
-            .float => |y_val| return vm.createFloat(@as(f64, @floatFromInt(x_val)) + y_val),
-            .float_list => return error.nyi,
-            .char => return error.nyi,
-            .char_list => return error.nyi,
-            .symbol => return error.nyi,
-            .symbol_list => return error.nyi,
-            .unary_primitive => return error.nyi,
-            .operator => return error.nyi,
-        },
-        .long_list => return error.nyi,
-        .float => |x_val| switch (y.as) {
-            .list => return error.nyi,
-            .boolean => return error.nyi,
-            .boolean_list => return error.nyi,
-            .long => |y_val| return vm.createFloat(x_val + @as(f64, @floatFromInt(y_val))),
-            .long_list => return error.nyi,
-            .float => |y_val| return vm.createFloat(x_val + y_val),
-            .float_list => return error.nyi,
-            .char => return error.nyi,
-            .char_list => return error.nyi,
-            .symbol => return error.nyi,
-            .symbol_list => return error.nyi,
-            .unary_primitive => return error.nyi,
-            .operator => return error.nyi,
-        },
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn subtract(vm: *Vm, x: *Value, y: *Value) !*Value {
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => |x_val| switch (y.as) {
-            .list => return error.nyi,
-            .boolean => return error.nyi,
-            .boolean_list => return error.nyi,
-            .long => |y_val| return vm.createLong(x_val - y_val),
-            .long_list => return error.nyi,
-            .float => |y_val| return vm.createFloat(@as(f64, @floatFromInt(x_val)) - y_val),
-            .float_list => return error.nyi,
-            .char => return error.nyi,
-            .char_list => return error.nyi,
-            .symbol => return error.nyi,
-            .symbol_list => return error.nyi,
-            .unary_primitive => return error.nyi,
-            .operator => return error.nyi,
-        },
-        .long_list => return error.nyi,
-        .float => |x_val| switch (y.as) {
-            .list => return error.nyi,
-            .boolean => return error.nyi,
-            .boolean_list => return error.nyi,
-            .long => |y_val| return vm.createFloat(x_val - @as(f64, @floatFromInt(y_val))),
-            .long_list => return error.nyi,
-            .float => |y_val| return vm.createFloat(x_val - y_val),
-            .float_list => return error.nyi,
-            .char => return error.nyi,
-            .char_list => return error.nyi,
-            .symbol => return error.nyi,
-            .symbol_list => return error.nyi,
-            .unary_primitive => return error.nyi,
-            .operator => return error.nyi,
-        },
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn multiply(vm: *Vm, x: *Value, y: *Value) !*Value {
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => |x_val| switch (y.as) {
-            .list => return error.nyi,
-            .boolean => return error.nyi,
-            .boolean_list => return error.nyi,
-            .long => |y_val| return vm.createLong(x_val * y_val),
-            .long_list => return error.nyi,
-            .float => |y_val| return vm.createFloat(@as(f64, @floatFromInt(x_val)) * y_val),
-            .float_list => return error.nyi,
-            .char => return error.nyi,
-            .char_list => return error.nyi,
-            .symbol => return error.nyi,
-            .symbol_list => return error.nyi,
-            .unary_primitive => return error.nyi,
-            .operator => return error.nyi,
-        },
-        .long_list => return error.nyi,
-        .float => |x_val| switch (y.as) {
-            .list => return error.nyi,
-            .boolean => return error.nyi,
-            .boolean_list => return error.nyi,
-            .long => |y_val| return vm.createFloat(x_val * @as(f64, @floatFromInt(y_val))),
-            .long_list => return error.nyi,
-            .float => |y_val| return vm.createFloat(x_val * y_val),
-            .float_list => return error.nyi,
-            .char => return error.nyi,
-            .char_list => return error.nyi,
-            .symbol => return error.nyi,
-            .symbol_list => return error.nyi,
-            .unary_primitive => return error.nyi,
-            .operator => return error.nyi,
-        },
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn divide(vm: *Vm, x: *Value, y: *Value) !*Value {
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => |x_val| switch (y.as) {
-            .list => return error.nyi,
-            .boolean => return error.nyi,
-            .boolean_list => return error.nyi,
-            .long => |y_val| return vm.createFloat(@as(f64, @floatFromInt(x_val)) / @as(f64, @floatFromInt(y_val))),
-            .long_list => return error.nyi,
-            .float => |y_val| return vm.createFloat(@as(f64, @floatFromInt(x_val)) / y_val),
-            .float_list => return error.nyi,
-            .char => return error.nyi,
-            .char_list => return error.nyi,
-            .symbol => return error.nyi,
-            .symbol_list => return error.nyi,
-            .unary_primitive => return error.nyi,
-            .operator => return error.nyi,
-        },
-        .long_list => return error.nyi,
-        .float => |x_val| switch (y.as) {
-            .list => return error.nyi,
-            .boolean => return error.nyi,
-            .boolean_list => return error.nyi,
-            .long => |y_val| return vm.createFloat(x_val / @as(f64, @floatFromInt(y_val))),
-            .long_list => return error.nyi,
-            .float => |y_val| return vm.createFloat(x_val / y_val),
-            .float_list => return error.nyi,
-            .char => return error.nyi,
-            .char_list => return error.nyi,
-            .symbol => return error.nyi,
-            .symbol_list => return error.nyi,
-            .unary_primitive => return error.nyi,
-            .operator => return error.nyi,
-        },
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn @"and"(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn @"or"(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn fill(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn equals(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn lessThan(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn greaterThan(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn cast(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn join(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn take(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn drop(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn match(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn dict(vm: *Vm, x: *Value, y: *Value) !*Value {
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => |val| switch (val) {
-            -5 => return vm.parse(y),
-            -6 => return vm.eval(y),
-            else => return error.nyi,
-        },
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
-}
-
-fn find(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn applyAt(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn apply(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn fileText(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn fileBinary(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-fn dynamicLoad(vm: *Vm, x: *Value, y: *Value) !*Value {
-    _ = vm; // autofix
-    _ = x; // autofix
-    _ = y; // autofix
-    unreachable;
-}
-
-//
-// Internal functions
-//
-
-fn parse(vm: *Vm, x: *Value) !*Value {
+pub fn parse(vm: *Vm, x: *Value) !*Value {
     assert(x.as == .char_list);
 
     const slice = try vm.gpa.dupeSentinel(u8, x.as.char_list, 0);
@@ -1050,22 +199,30 @@ fn parse(vm: *Vm, x: *Value) !*Value {
         return error.parse;
     }
 
-    return vm.compile(&tree);
+    return vm.parseTree(&tree);
 }
 
-fn eval(vm: *Vm, x: *Value) Error!*Value {
+pub fn eval(vm: *Vm, x: *Value) Vm.Error!*Value {
     switch (x.as) {
-        .list => |val| {
-            if (val.len == 1 and val[0].as == .symbol_list) return val[0].ref();
+        .list => |value| {
+            if (value.len == 1 and value[0].as == .symbol_list) return value[0].ref();
 
-            var it = std.mem.reverseIterator(val);
+            if (value[0].as == .char and value[0].as.char == ';') {
+                for (value[1 .. value.len - 1]) |val| {
+                    const v = try vm.eval(val);
+                    defer v.deref(vm.gpa);
+                }
+                return vm.eval(value[value.len - 1]);
+            }
+
+            var it = std.mem.reverseIterator(value);
             while (it.next()) |entry| vm.push(try vm.eval(entry));
 
-            const stack = vm.stack[vm.stack_top - val.len .. vm.stack_top];
+            const stack = vm.stack[vm.stack_top - value.len .. vm.stack_top];
             // TODO: Remove reverse
             std.mem.reverse(*Value, stack);
             defer {
-                vm.stack_top -= val.len;
+                vm.stack_top -= value.len;
                 for (stack) |v| v.deref(vm.gpa);
             }
 
@@ -1075,114 +232,138 @@ fn eval(vm: *Vm, x: *Value) Error!*Value {
             return vm.applyImpl(func, args);
         },
         .symbol => @panic("NYI"),
-        .symbol_list => |val| {
-            assert(val.len == 1);
-            return vm.createSymbol(val[0]);
+        .symbol_list => |value| {
+            assert(value.len == 1);
+            return vm.createValue(.symbol, value[0]);
         },
         else => return x.ref(),
     }
 }
 
-fn compileNode(vm: *Vm, node: Ast.Node.Index) !*Value {
+fn parseNode(vm: *Vm, node: Ast.Node.Index) !*Value {
     const tree = vm.tree;
     const gpa = vm.gpa;
 
     switch (tree.nodeTag(node)) {
         .root => {
             const nodes = tree.extraDataSlice(tree.nodeData(.root).extra_range, Ast.Node.Index);
-            assert(nodes.len == 1);
-            return vm.compileNode(nodes[0]);
+            assert(nodes.len > 0);
+            if (nodes.len == 1) return vm.parseNode(nodes[0]);
+
+            var list: std.ArrayList(*Value) = try .initCapacity(gpa, nodes.len + 1);
+            defer {
+                for (list.items) |v| v.deref(gpa);
+                list.deinit(gpa);
+            }
+            list.appendAssumeCapacity(try vm.createValue(.char, ';'));
+            for (nodes) |n| list.appendAssumeCapacity(try vm.parseNode(n));
+
+            try list.shrinkToLen(gpa);
+            return vm.createValue(.list, list.toOwnedSliceAssert());
         },
         .empty => @panic("NYI"),
 
-        .grouped_expression => return vm.compileNode(tree.nodeData(node).node_and_token[0]),
-        .empty_list => return vm.createList(0),
+        .grouped_expression => return vm.parseNode(tree.nodeData(node).node_and_token[0]),
+        .empty_list => return vm.allocValue(.list, 0),
         .list => {
             const nodes = tree.extraDataSlice(tree.nodeData(node).extra_range, Ast.Node.Index);
 
-            const val = try vm.createList(nodes.len + 1);
+            const value = try vm.allocValue(.list, nodes.len + 1);
             var i: usize = 0;
             errdefer {
-                for (val.as.list[0..i]) |v| v.deref(gpa);
-                gpa.destroy(val);
+                for (value.as.list[0..i]) |v| v.deref(gpa);
+                gpa.destroy(value);
             }
 
-            val.as.list[0] = vm.unary_primitives[@intFromEnum(UnaryPrimitive.list)].ref();
+            value.as.list[0] = vm.unary_primitives[@intFromEnum(UnaryPrimitive.list)].ref();
             i += 1;
 
             for (nodes) |n| {
-                val.as.list[i] = try vm.compileNode(n);
+                value.as.list[i] = try vm.parseNode(n);
                 i += 1;
             }
 
-            return val;
+            return value;
         },
         .table_literal => @panic("NYI"),
 
         .lambda => @panic("NYI"),
 
-        .expr_block => @panic("NYI"),
+        .expr_block => {
+            const nodes = tree.extraDataSlice(tree.nodeData(node).extra_range, Ast.Node.Index);
+
+            var list: std.ArrayList(*Value) = try .initCapacity(gpa, nodes.len + 1);
+            defer {
+                for (list.items) |v| v.deref(gpa);
+                list.deinit(gpa);
+            }
+            list.appendAssumeCapacity(try vm.createValue(.char, ';'));
+            for (nodes) |n| list.appendAssumeCapacity(try vm.parseNode(n));
+
+            try list.shrinkToLen(gpa);
+            return vm.createValue(.list, list.toOwnedSliceAssert());
+        },
 
         .call => {
             const nodes = tree.extraDataSlice(tree.nodeData(node).extra_range, Ast.Node.Index);
 
-            const val = try vm.createList(nodes.len);
+            const value = try vm.allocValue(.list, nodes.len);
             var i: usize = 0;
             errdefer {
-                for (val.as.list[0..i]) |v| v.deref(gpa);
-                gpa.destroy(val);
+                for (value.as.list[0..i]) |v| v.deref(gpa);
+                gpa.destroy(value);
             }
 
             for (nodes) |n| {
-                val.as.list[i] = try vm.compileNode(n);
+                value.as.list[i] = try vm.parseNode(n);
                 i += 1;
             }
 
-            return val;
+            return value;
         },
         .apply_unary => {
             const lhs, const rhs = tree.nodeData(node).node_and_node;
 
-            const rhs_value = try vm.compileNode(rhs);
+            const rhs_value = try vm.parseNode(rhs);
             errdefer rhs_value.deref(gpa);
 
             const lhs_value = value: {
                 const prev_force_unary = vm.apply_unary;
                 defer vm.apply_unary = prev_force_unary;
                 vm.apply_unary = true;
-                break :value try vm.compileNode(lhs);
+                break :value try vm.parseNode(lhs);
             };
             errdefer lhs_value.deref(gpa);
 
-            const val = try vm.createList(2);
+            const value = try vm.allocValue(.list, 2);
             errdefer comptime unreachable;
 
-            val.as.list[0] = lhs_value;
-            val.as.list[1] = rhs_value;
+            value.as.list[0] = lhs_value;
+            value.as.list[1] = rhs_value;
 
-            return val;
+            return value;
         },
         .apply_binary => {
             const lhs, const maybe_rhs = tree.nodeData(node).node_and_opt_node;
             const op: Ast.Node.Index = @enumFromInt(tree.nodeMainToken(node));
             if (maybe_rhs.unwrap()) |rhs| {
-                const rhs_value = try vm.compileNode(rhs);
+                const rhs_value = try vm.parseNode(rhs);
                 errdefer rhs_value.deref(gpa);
 
-                const op_value = try vm.compileNode(op);
+                const op_value = try vm.parseNode(op);
                 errdefer op_value.deref(gpa);
 
-                const lhs_value = try vm.compileNode(lhs);
+                const lhs_value = try vm.parseNode(lhs);
                 errdefer lhs_value.deref(gpa);
 
-                const val = try vm.createList(3);
+                const value = try vm.allocValue(.list, 3);
                 errdefer comptime unreachable;
 
-                val.as.list[0] = op_value;
-                val.as.list[1] = lhs_value;
-                val.as.list[2] = rhs_value;
+                value.as.list[0] = op_value;
+                value.as.list[1] = lhs_value;
+                value.as.list[2] = rhs_value;
 
-                return val;
+                return value;
             } else unreachable;
         },
 
@@ -1239,23 +420,23 @@ fn compileNode(vm: *Vm, node: Ast.Node.Index) !*Value {
             const main_token = tree.nodeMainToken(node);
             const slice = tree.tokenSlice(main_token);
             if (Long.parse(slice)) |long| {
-                return vm.createLong(@intFromEnum(long));
+                return vm.createValue(.long, @intFromEnum(long));
             } else |_| {
-                return vm.createFloat(try std.fmt.parseFloat(f64, slice));
+                return vm.createValue(.float, try std.fmt.parseFloat(f64, slice));
             }
         },
         .number_list_literal => {
             const first_token = tree.nodeMainToken(node);
             const last_token = tree.nodeData(node).token;
             const number_list = list: {
-                const long_list = try vm.createLongList(last_token - first_token + 1);
+                const long_list = try vm.allocValue(.long_list, last_token - first_token + 1);
                 defer long_list.deref(gpa);
                 for (first_token..last_token + 1, 0..) |tok, i| {
                     const slice = tree.tokenSlice(@intCast(tok));
                     if (Long.parse(slice)) |long| {
                         long_list.as.long_list[i] = @intFromEnum(long);
                     } else |_| {
-                        const float_list = try vm.createFloatList(last_token - first_token + 1);
+                        const float_list = try vm.allocValue(.float_list, last_token - first_token + 1);
                         errdefer float_list.deref(gpa);
                         for (float_list.as.float_list[0..i], long_list.as.long_list[0..i]) |*f, l| f.* = @floatFromInt(l);
                         for (tok..last_token + 1, i..) |inner_tok, inner_i| {
@@ -1303,18 +484,30 @@ fn compileNode(vm: *Vm, node: Ast.Node.Index) !*Value {
             }
 
             const buffered = fixed.buffered();
-            if (buffered.len == 1) return vm.createChar(buffered[0]);
-            const char_list = try vm.createCharList(buffered.len);
+            if (buffered.len == 1) return vm.createValue(.char, buffered[0]);
+            const char_list = try vm.allocValue(.char_list, buffered.len);
             errdefer comptime unreachable;
             @memcpy(char_list.as.char_list, buffered);
             return char_list;
         },
-        .multiline_string_literal => @panic("NYI"),
+        .multiline_string_literal => {
+            const first_token = tree.nodeMainToken(node);
+            const last_token = tree.nodeData(node).token;
+            var list: std.ArrayList(u8) = .empty;
+            defer list.deinit(gpa);
+            for (first_token..last_token + 1, 0..) |tok, i| {
+                const slice = tree.tokenSlice(@intCast(tok));
+                try list.appendSlice(gpa, slice[2..]);
+                if (i < last_token) try list.append(gpa, '\n');
+            }
+            try list.shrinkToLen(gpa);
+            return vm.createValue(.char_list, list.toOwnedSliceAssert());
+        },
         .symbol_literal => {
             const main_token = tree.nodeMainToken(node);
             const slice = tree.tokenSlice(main_token);
             const symbol = try vm.intern(slice[1..]);
-            const symbol_list = try vm.createSymbolList(1);
+            const symbol_list = try vm.allocValue(.symbol_list, 1);
             errdefer comptime unreachable;
             symbol_list.as.symbol_list[0] = symbol;
             return symbol_list;
@@ -1322,23 +515,23 @@ fn compileNode(vm: *Vm, node: Ast.Node.Index) !*Value {
         .symbol_list_literal => {
             const first_token = tree.nodeMainToken(node);
             const last_token = tree.nodeData(node).token;
-            const symbol_list = try vm.createSymbolList(last_token - first_token + 1);
+            const symbol_list = try vm.allocValue(.symbol_list, last_token - first_token + 1);
             errdefer symbol_list.deref(gpa);
             for (first_token..last_token + 1, 0..) |tok, i| {
                 const slice = tree.tokenSlice(@intCast(tok));
                 const symbol = try vm.intern(slice[1..]);
                 symbol_list.as.symbol_list[i] = symbol;
             }
-            const val = try vm.createList(1);
+            const value = try vm.allocValue(.list, 1);
             errdefer comptime unreachable;
-            val.as.list[0] = symbol_list;
-            return val;
+            value.as.list[0] = symbol_list;
+            return value;
         },
         .identifier => {
             const main_token = tree.nodeMainToken(node);
             const slice = tree.tokenSlice(main_token);
             const symbol = try vm.intern(slice);
-            return vm.createSymbol(symbol);
+            return vm.createValue(.symbol, symbol);
         },
     }
 }
@@ -1367,70 +560,18 @@ pub fn internedString(vm: *Vm, index: Symbol) [:0]const u8 {
     return slice[0..std.mem.findScalar(u8, slice, 0).? :0];
 }
 
-fn createList(vm: *Vm, len: usize) !*Value {
-    return vm.allocValue(.list, len);
-}
-
-fn createBoolean(vm: *Vm, val: bool) !*Value {
-    return vm.createValue(.boolean, val);
-}
-
-fn createBooleanList(vm: *Vm, len: usize) !*Value {
-    return vm.allocValue(.boolean_list, len);
-}
-
-fn createLong(vm: *Vm, val: i64) !*Value {
-    return vm.createValue(.long, val);
-}
-
-fn createLongList(vm: *Vm, len: usize) !*Value {
-    return vm.allocValue(.long_list, len);
-}
-
-fn createFloat(vm: *Vm, val: f64) !*Value {
-    return vm.createValue(.float, val);
-}
-
-fn createFloatList(vm: *Vm, len: usize) !*Value {
-    return vm.allocValue(.float_list, len);
-}
-
-fn createChar(vm: *Vm, val: u8) !*Value {
-    return vm.createValue(.char, val);
-}
-
-fn createCharList(vm: *Vm, len: usize) !*Value {
-    return vm.allocValue(.char_list, len);
-}
-
-fn createSymbol(vm: *Vm, val: Symbol) !*Value {
-    return vm.createValue(.symbol, val);
-}
-
-fn createSymbolList(vm: *Vm, len: usize) !*Value {
-    return vm.allocValue(.symbol_list, len);
-}
-
-fn createUnaryPrimitive(vm: *Vm, val: UnaryPrimitive) !*Value {
-    return vm.createValue(.unary_primitive, val);
-}
-
-fn createOperator(vm: *Vm, val: Operator) !*Value {
-    return vm.createValue(.operator, val);
-}
-
-fn createValue(vm: *Vm, comptime tag: Value.Type, val: @FieldType(Value.Union, @tagName(tag))) !*Value {
+pub fn createValue(vm: *Vm, comptime tag: Value.Type, value: @FieldType(Value.Union, @tagName(tag))) !*Value {
     const self = try vm.gpa.create(Value);
     errdefer comptime unreachable;
-    self.* = .{ .as = @unionInit(Value.Union, @tagName(tag), val) };
+    self.* = .{ .as = @unionInit(Value.Union, @tagName(tag), value) };
     return self;
 }
 
-fn allocValue(vm: *Vm, comptime tag: Value.Type, len: usize) !*Value {
+pub fn allocValue(vm: *Vm, comptime tag: Value.Type, len: usize) !*Value {
     const T = @typeInfo(@FieldType(Value.Union, @tagName(tag))).pointer.child;
-    const val = try vm.gpa.alloc(T, len);
-    errdefer vm.gpa.free(val);
-    return vm.createValue(tag, val);
+    const value = try vm.gpa.alloc(T, len);
+    errdefer vm.gpa.free(value);
+    return vm.createValue(tag, value);
 }
 
 test {
@@ -1449,10 +590,10 @@ fn testVm(source: [:0]const u8, comptime tag: Value.Type, expected: anytype) !vo
 
     try std.testing.expectEqual(0, tree.errors.len);
 
-    const val = try vm.evalTree(&tree);
-    defer val.deref(gpa);
+    const value = try vm.evalTree(&tree);
+    defer value.deref(gpa);
 
-    try std.testing.expectEqual(tag, @as(Value.Type, val.as));
+    try std.testing.expectEqual(tag, @as(Value.Type, value.as));
 
     const T = @FieldType(Value.Union, @tagName(tag));
     switch (tag) {
@@ -1462,7 +603,7 @@ fn testVm(source: [:0]const u8, comptime tag: Value.Type, expected: anytype) !vo
         .float_list,
         .char_list,
         .symbol_list,
-        => try std.testing.expectEqualSlices(@typeInfo(T).pointer.child, expected, @field(val.as, @tagName(tag))),
+        => try std.testing.expectEqualSlices(@typeInfo(T).pointer.child, expected, @field(value.as, @tagName(tag))),
         .boolean,
         .long,
         .float,
@@ -1470,7 +611,7 @@ fn testVm(source: [:0]const u8, comptime tag: Value.Type, expected: anytype) !vo
         .symbol,
         .unary_primitive,
         .operator,
-        => try std.testing.expectEqual(expected, @field(val.as, @tagName(tag))),
+        => try std.testing.expectEqual(expected, @field(value.as, @tagName(tag))),
     }
 }
 
