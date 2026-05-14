@@ -276,9 +276,9 @@ fn startsExpr(p: *Parse) bool {
     const start = p.tokenStart(p.tok_i);
     if (start == 0 or p.source[start - 1] == '\n') return true;
 
-    return switch (p.tokenTag(p.tok_i - 1)) {
-        .r_paren, .r_bracket, .r_brace, .semicolon, .eos, .eof => true,
-        else => false,
+    return switch (p.tokenTag(p.tok_i)) {
+        .r_paren, .r_bracket, .r_brace, .semicolon, .eos, .eof, .invalid => false,
+        else => true,
     };
 }
 
