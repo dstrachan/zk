@@ -657,7 +657,7 @@ fn parseNumberLiteral(p: *Parse) !Node.Index {
     while (p.tokenTag(p.tok_i) == .number_literal) {
         const slice = p.tokenSlice(last_token);
         switch (slice[slice.len - 1]) {
-            'a'...'z' => break,
+            'b' => break,
             else => {},
         }
         last_token = p.assertToken(.number_literal);

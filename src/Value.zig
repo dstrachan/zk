@@ -60,13 +60,17 @@ pub fn format(self: *Value, w: *Io.Writer, vm: *Vm) !void {
                 try w.writeByte('b');
             }
         },
-        .long => |value| try w.print("{d}", .{value}),
+        .long => |value| {
+            const long: Long = @enumFromInt(value);
+            try w.print("{f}", .{long});
+        },
         .long_list => |value| {
             if (value.len == 0) {
                 try w.writeAll("`long$()");
             } else {
-                try w.print("{d}", .{value[0]});
-                for (value[1..]) |v| try w.print(" {d}", .{v});
+                const long_list: []Long = @ptrCast(value);
+                try w.print("{f}", .{long_list[0]});
+                for (long_list[1..]) |v| try w.print(" {f}", .{v});
             }
         },
         .float => |value| try w.print("{d}f", .{value}),
@@ -173,6 +177,35 @@ pub const Union = union(Type) {
     symbol_list: []Symbol,
     unary_primitive: UnaryPrimitive,
     operator: Operator,
+};
+
+pub const Long = enum(i64) {
+    null = std.math.minInt(i64),
+    neg_inf = -std.math.maxInt(i64),
+    inf = std.math.maxInt(i64),
+    _,
+
+    pub fn parse(buf: []const u8) !Long {
+        switch (buf.len) {
+            2 => if (buf[0] == '0') switch (std.ascii.toLower(buf[1])) {
+                'n' => return .null,
+                'w' => return .inf,
+                else => {},
+            },
+            3 => if (buf[0] == '-' and buf[1] == '0' and std.ascii.toLower(buf[2]) == 'w') return .neg_inf,
+            else => {},
+        }
+        return @enumFromInt(try std.fmt.parseInt(i64, buf, 10));
+    }
+
+    pub fn format(long: Long, w: *Io.Writer) !void {
+        switch (long) {
+            .null => try w.writeAll("0N"),
+            .neg_inf => try w.writeAll("-0W"),
+            .inf => try w.writeAll("0W"),
+            else => try w.print("{d}", .{@intFromEnum(long)}),
+        }
+    }
 };
 
 pub const Symbol = enum(u32) {

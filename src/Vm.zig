@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 const zk = @import("root.zig");
 const Ast = zk.Ast;
 const Value = zk.Value;
+const Long = Value.Long;
 const Symbol = Value.Symbol;
 const UnaryPrimitive = Value.UnaryPrimitive;
 const Operator = Value.Operator;
@@ -1237,23 +1238,36 @@ fn compileNode(vm: *Vm, node: Ast.Node.Index) !*Value {
         .number_literal => {
             const main_token = tree.nodeMainToken(node);
             const slice = tree.tokenSlice(main_token);
-            const long = std.fmt.parseInt(i64, slice, 10) catch {
-                const float = try std.fmt.parseFloat(f64, slice);
-                return vm.createFloat(float);
-            };
-            return vm.createLong(long);
+            if (Long.parse(slice)) |long| {
+                return vm.createLong(@intFromEnum(long));
+            } else |_| {
+                return vm.createFloat(try std.fmt.parseFloat(f64, slice));
+            }
         },
         .number_list_literal => {
             const first_token = tree.nodeMainToken(node);
             const last_token = tree.nodeData(node).token;
-            const long_list = try vm.createLongList(last_token - first_token + 1);
-            errdefer long_list.deref(gpa);
-            for (first_token..last_token + 1, 0..) |tok, i| {
-                const slice = tree.tokenSlice(@intCast(tok));
-                const long = try std.fmt.parseInt(i64, slice, 10);
-                long_list.as.long_list[i] = long;
-            }
-            return long_list;
+            const number_list = list: {
+                const long_list = try vm.createLongList(last_token - first_token + 1);
+                defer long_list.deref(gpa);
+                for (first_token..last_token + 1, 0..) |tok, i| {
+                    const slice = tree.tokenSlice(@intCast(tok));
+                    if (Long.parse(slice)) |long| {
+                        long_list.as.long_list[i] = @intFromEnum(long);
+                    } else |_| {
+                        const float_list = try vm.createFloatList(last_token - first_token + 1);
+                        errdefer float_list.deref(gpa);
+                        for (float_list.as.float_list[0..i], long_list.as.long_list[0..i]) |*f, l| f.* = @floatFromInt(l);
+                        for (tok..last_token + 1, i..) |inner_tok, inner_i| {
+                            const inner_slice = tree.tokenSlice(@intCast(inner_tok));
+                            float_list.as.float_list[inner_i] = try std.fmt.parseFloat(f64, inner_slice);
+                        }
+                        break :list float_list;
+                    }
+                }
+                break :list long_list.ref();
+            };
+            return number_list;
         },
         .string_literal => {
             const main_token = tree.nodeMainToken(node);
@@ -1423,19 +1437,54 @@ test {
     std.testing.refAllDecls(@This());
 }
 
-test {
+fn testVm(source: [:0]const u8, comptime tag: Value.Type, expected: anytype) !void {
+    const io = std.testing.io;
     const gpa = std.testing.allocator;
-    const source =
-        \\-6!-5!"-6!-5!\"3*4+5\""
-    ;
-    var vm: *Vm = try .init(std.testing.io, gpa);
+
+    var vm: *Vm = try .init(io, gpa);
     defer vm.deinit();
 
     var tree: Ast = try .parse(gpa, source);
     defer tree.deinit(gpa);
 
+    try std.testing.expectEqual(0, tree.errors.len);
+
     const val = try vm.evalTree(&tree);
     defer val.deref(gpa);
 
-    try std.testing.expectEqual(27, val.as.long);
+    try std.testing.expectEqual(tag, @as(Value.Type, val.as));
+
+    const T = @FieldType(Value.Union, @tagName(tag));
+    switch (tag) {
+        .list,
+        .boolean_list,
+        .long_list,
+        .float_list,
+        .char_list,
+        .symbol_list,
+        => try std.testing.expectEqualSlices(@typeInfo(T).pointer.child, expected, @field(val.as, @tagName(tag))),
+        .boolean,
+        .long,
+        .float,
+        .char,
+        .symbol,
+        .unary_primitive,
+        .operator,
+        => try std.testing.expectEqual(expected, @field(val.as, @tagName(tag))),
+    }
+}
+
+test "parse/eval" {
+    try testVm(
+        \\-6!-5!"-6!-5!\"3*4+5\""
+    , .long, 27);
+}
+
+test "number list literal with null/inf" {
+    const long_null = @intFromEnum(Long.null);
+    const long_neg_inf = @intFromEnum(Long.neg_inf);
+    const long_inf = @intFromEnum(Long.inf);
+    try testVm("1 2 0n 0N -0w -0W 0w 0W 3 4", .long_list, &.{
+        1, 2, long_null, long_null, long_neg_inf, long_neg_inf, long_inf, long_inf, 3, 4,
+    });
 }
