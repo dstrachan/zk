@@ -272,16 +272,6 @@ fn parseExpr(p: *Parse) Error!Node.OptionalIndex {
     return node.toOptional();
 }
 
-fn startsExpr(p: *Parse) bool {
-    const start = p.tokenStart(p.tok_i);
-    if (start == 0 or p.source[start - 1] == '\n') return true;
-
-    return switch (p.tokenTag(p.tok_i)) {
-        .r_paren, .r_bracket, .r_brace, .semicolon, .eos, .eof, .invalid => false,
-        else => true,
-    };
-}
-
 fn endsExpr(p: *Parse) bool {
     return switch (p.tokenTag(p.tok_i)) {
         .r_paren, .r_bracket, .r_brace, .semicolon, .eos, .eof => true,
@@ -768,8 +758,9 @@ fn nextToken(p: *Parse) TokenIndex {
 }
 
 fn skipExpr(p: *Parse) void {
-    while (!p.startsExpr()) {
+    while (true) {
         if (p.tokenTag(p.tok_i) == .eof) break;
+        if (p.eatToken(.eos)) |_| break;
         _ = p.nextToken();
     }
 }
