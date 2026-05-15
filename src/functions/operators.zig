@@ -34,6 +34,7 @@ pub fn add(vm: *Vm, x: *Value, y: *Value) !*Value {
             .lambda => return error.nyi,
             .unary_primitive => return error.nyi,
             .operator => return error.nyi,
+            .projection => return error.nyi,
         },
         .long_list => return error.nyi,
         .float => |x_val| switch (y.as) {
@@ -52,6 +53,7 @@ pub fn add(vm: *Vm, x: *Value, y: *Value) !*Value {
             .lambda => return error.nyi,
             .unary_primitive => return error.nyi,
             .operator => return error.nyi,
+            .projection => return error.nyi,
         },
         .float_list => return error.nyi,
         .char => return error.nyi,
@@ -62,6 +64,7 @@ pub fn add(vm: *Vm, x: *Value, y: *Value) !*Value {
         .lambda => return error.nyi,
         .unary_primitive => return error.nyi,
         .operator => return error.nyi,
+        .projection => return error.nyi,
     }
 }
 
@@ -86,6 +89,7 @@ pub fn subtract(vm: *Vm, x: *Value, y: *Value) !*Value {
             .lambda => return error.nyi,
             .unary_primitive => return error.nyi,
             .operator => return error.nyi,
+            .projection => return error.nyi,
         },
         .long_list => return error.nyi,
         .float => |x_val| switch (y.as) {
@@ -104,6 +108,7 @@ pub fn subtract(vm: *Vm, x: *Value, y: *Value) !*Value {
             .lambda => return error.nyi,
             .unary_primitive => return error.nyi,
             .operator => return error.nyi,
+            .projection => return error.nyi,
         },
         .float_list => return error.nyi,
         .char => return error.nyi,
@@ -114,6 +119,7 @@ pub fn subtract(vm: *Vm, x: *Value, y: *Value) !*Value {
         .lambda => return error.nyi,
         .unary_primitive => return error.nyi,
         .operator => return error.nyi,
+        .projection => return error.nyi,
     }
 }
 
@@ -138,6 +144,7 @@ pub fn multiply(vm: *Vm, x: *Value, y: *Value) !*Value {
             .lambda => return error.nyi,
             .unary_primitive => return error.nyi,
             .operator => return error.nyi,
+            .projection => return error.nyi,
         },
         .long_list => return error.nyi,
         .float => |x_val| switch (y.as) {
@@ -156,6 +163,7 @@ pub fn multiply(vm: *Vm, x: *Value, y: *Value) !*Value {
             .lambda => return error.nyi,
             .unary_primitive => return error.nyi,
             .operator => return error.nyi,
+            .projection => return error.nyi,
         },
         .float_list => return error.nyi,
         .char => return error.nyi,
@@ -166,6 +174,7 @@ pub fn multiply(vm: *Vm, x: *Value, y: *Value) !*Value {
         .lambda => return error.nyi,
         .unary_primitive => return error.nyi,
         .operator => return error.nyi,
+        .projection => return error.nyi,
     }
 }
 
@@ -190,6 +199,7 @@ pub fn divide(vm: *Vm, x: *Value, y: *Value) !*Value {
             .lambda => return error.nyi,
             .unary_primitive => return error.nyi,
             .operator => return error.nyi,
+            .projection => return error.nyi,
         },
         .long_list => return error.nyi,
         .float => |x_val| switch (y.as) {
@@ -208,6 +218,7 @@ pub fn divide(vm: *Vm, x: *Value, y: *Value) !*Value {
             .lambda => return error.nyi,
             .unary_primitive => return error.nyi,
             .operator => return error.nyi,
+            .projection => return error.nyi,
         },
         .float_list => return error.nyi,
         .char => return error.nyi,
@@ -218,6 +229,7 @@ pub fn divide(vm: *Vm, x: *Value, y: *Value) !*Value {
         .lambda => return error.nyi,
         .unary_primitive => return error.nyi,
         .operator => return error.nyi,
+        .projection => return error.nyi,
     }
 }
 
@@ -323,6 +335,7 @@ pub fn dict(vm: *Vm, x: *Value, y: *Value) !*Value {
         .lambda => return error.nyi,
         .unary_primitive => return error.nyi,
         .operator => return error.nyi,
+        .projection => return error.nyi,
     }
 }
 

@@ -55,6 +55,7 @@ pub fn neg(vm: *Vm, x: *Value) !*Value {
         .lambda => return error.type,
         .unary_primitive => return error.type,
         .operator => return error.type,
+        .projection => return error.type,
     }
 }
 
@@ -75,6 +76,7 @@ pub fn first(vm: *Vm, x: *Value) !*Value {
         .lambda => return x.ref(),
         .unary_primitive => return x.ref(),
         .operator => return x.ref(),
+        .projection => return x.ref(),
     }
 }
 
@@ -213,6 +215,12 @@ pub fn list(vm: *Vm, x: *Value) !*Value {
             v.as.list[0] = x.ref();
             return v;
         },
+        .projection => {
+            const v = try vm.allocValue(.list, 1);
+            errdefer comptime unreachable;
+            v.as.list[0] = x.ref();
+            return v;
+        },
     }
 }
 
@@ -255,6 +263,7 @@ pub fn key(vm: *Vm, x: *Value) !*Value {
         .lambda => return error.nyi,
         .unary_primitive => return error.nyi,
         .operator => return error.nyi,
+        .projection => return error.nyi,
     }
 }
 

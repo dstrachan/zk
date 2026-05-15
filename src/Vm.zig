@@ -160,11 +160,45 @@ fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
         },
         .operator => |operator| {
             if (args.len > 2) return error.rank;
-            if (args.len == 1) return error.nyi;
-            switch (operator) {
-                inline else => |t| return @field(zk.operators, @tagName(t))(vm, args[0], args[1]),
+            if (args.len == 1) {
+                var values: std.ArrayList(*Value) = try .initCapacity(vm.gpa, 1);
+                defer values.deinit(vm.gpa);
+                errdefer for (values.items) |v| v.deref(vm.gpa);
+
+                values.appendAssumeCapacity(args[0].ref());
+
+                const callee = func.ref();
+                errdefer callee.deref(vm.gpa);
+
+                return vm.createValue(.projection, .{
+                    .callee = callee,
+                    .args = values.toOwnedSliceAssert(),
+                });
+            }
+            if ((args[0].as == .unary_primitive and args[0].as.unary_primitive == .empty) or
+                (args[1].as == .unary_primitive and args[1].as.unary_primitive == .empty))
+            {
+                var values: std.ArrayList(*Value) = try .initCapacity(vm.gpa, 2);
+                defer values.deinit(vm.gpa);
+                errdefer for (values.items) |v| v.deref(vm.gpa);
+
+                values.appendAssumeCapacity(args[0].ref());
+                values.appendAssumeCapacity(args[1].ref());
+
+                const callee = func.ref();
+                errdefer callee.deref(vm.gpa);
+
+                return vm.createValue(.projection, .{
+                    .callee = callee,
+                    .args = values.toOwnedSliceAssert(),
+                });
+            } else {
+                switch (operator) {
+                    inline else => |t| return @field(zk.operators, @tagName(t))(vm, args[0], args[1]),
+                }
             }
         },
+        .projection => return error.nyi,
     }
 }
 
@@ -215,6 +249,7 @@ pub fn enlist(vm: *Vm, args: []*Value) !*Value {
             .lambda => {},
             .unary_primitive => {},
             .operator => {},
+            .projection => {},
         }
     }
 

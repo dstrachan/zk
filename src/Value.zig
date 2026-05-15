@@ -49,6 +49,11 @@ pub fn deref(value: *Value, gpa: Allocator) void {
             },
             .unary_primitive => {},
             .operator => {},
+            .projection => |val| {
+                val.callee.deref(gpa);
+                for (val.args) |v| v.deref(gpa);
+                gpa.free(val.args);
+            },
         }
         gpa.destroy(value);
     }
@@ -134,6 +139,18 @@ pub fn format(self: *Value, w: *Io.Writer, vm: *Vm) !void {
         .lambda => |value| try w.print("{s}", .{value.source}),
         .unary_primitive => |value| try w.print("{f}", .{value}),
         .operator => |value| try w.print("{f}", .{value}),
+        .projection => |value| {
+            try w.print("{f}", .{value.callee.alt(vm)});
+            try w.writeByte('[');
+            if (value.args[0].as != .unary_primitive or value.args[0].as.unary_primitive != .empty) {
+                try w.print("{f}", .{value.args[0].alt(vm)});
+            }
+            for (value.args[1..]) |a| {
+                try w.writeByte(';');
+                if (a.as != .unary_primitive or a.as.unary_primitive != .empty) try w.print("{f}", .{a.alt(vm)});
+            }
+            try w.writeByte(']');
+        },
     }
 }
 
@@ -167,6 +184,7 @@ pub fn count(value: *Value) usize {
         .lambda => 1,
         .unary_primitive => 1,
         .operator => 1,
+        .projection => 1,
     };
 }
 
@@ -214,7 +232,7 @@ pub const Type = enum(i8) {
     unary_primitive = 101,
     operator = 102,
     // iterator = 103,
-    // projection = 104,
+    projection = 104,
     // composition = 105,
 };
 
@@ -234,6 +252,7 @@ pub const Union = union(Type) {
     lambda: Lambda,
     unary_primitive: UnaryPrimitive,
     operator: Operator,
+    projection: Projection,
 };
 
 pub const Long = enum(i64) {
@@ -390,6 +409,11 @@ pub const Operator = enum {
             .dynamic_load => try w.writeAll("2:"),
         }
     }
+};
+
+pub const Projection = struct {
+    callee: *Value,
+    args: []const *Value,
 };
 
 test {
