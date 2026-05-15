@@ -308,9 +308,11 @@ pub const UnaryPrimitive = enum {
     read_text, // 0::
     read_binary, // 1::
 
+    empty,
+
     pub fn format(self: UnaryPrimitive, w: *Io.Writer) !void {
         switch (self) {
-            .identity => try w.writeAll("::"),
+            .identity, .empty => try w.writeAll("::"),
             .flip => try w.writeAll("+:"),
             .neg => try w.writeAll("-:"),
             .first => try w.writeAll("*:"),

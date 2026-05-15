@@ -36,6 +36,10 @@ state: *Value = undefined,
 
 const Constant = enum(u8) {
     empty_list,
+    zero,
+    one,
+    semicolon,
+    null_symbol,
 };
 
 pub fn init(io: Io, gpa: Allocator, stdout: *Io.Writer) !*Vm {
@@ -50,6 +54,14 @@ pub fn init(io: Io, gpa: Allocator, stdout: *Io.Writer) !*Vm {
     var constants_created: usize = 0;
     errdefer for (0..constants_created) |i| vm.constants[i].deref(vm.gpa);
     vm.constants[@intFromEnum(Constant.empty_list)] = try vm.allocValue(.list, 0);
+    constants_created += 1;
+    vm.constants[@intFromEnum(Constant.zero)] = try vm.createValue(.long, 0);
+    constants_created += 1;
+    vm.constants[@intFromEnum(Constant.one)] = try vm.createValue(.long, 1);
+    constants_created += 1;
+    vm.constants[@intFromEnum(Constant.semicolon)] = try vm.createValue(.char, ';');
+    constants_created += 1;
+    vm.constants[@intFromEnum(Constant.null_symbol)] = try vm.createValue(.symbol, try vm.intern(""));
     constants_created += 1;
 
     var unary_primitives_created: usize = 0;
@@ -66,15 +78,13 @@ pub fn init(io: Io, gpa: Allocator, stdout: *Io.Writer) !*Vm {
         operators_created += 1;
     }
 
-    assert(.empty == try vm.intern(""));
-
     const keys = try vm.allocValue(.symbol_list, 1);
     errdefer keys.deref(gpa);
     keys.as.symbol_list[0] = .empty;
 
     const values = try vm.allocValue(.list, 1);
     errdefer values.deref(gpa);
-    values.as.list[0] = vm.unary_primitives[@intFromEnum(UnaryPrimitive.identity)].ref();
+    values.as.list[0] = vm.getUnaryPrimitive(.identity);
 
     const dict = try vm.createValue(.dict, .{ .keys = keys, .values = values });
     errdefer comptime unreachable;
@@ -91,8 +101,21 @@ pub fn deinit(vm: *Vm) void {
     for (vm.constants) |v| v.deref(vm.gpa);
     for (vm.unary_primitives) |v| v.deref(vm.gpa);
     for (vm.operators) |v| v.deref(vm.gpa);
+    assert(vm.stack.items.len == 0);
     vm.stack.deinit(vm.gpa);
     vm.gpa.destroy(vm);
+}
+
+fn getConstant(vm: *Vm, constant: Constant) *Value {
+    return vm.constants[@intFromEnum(constant)].ref();
+}
+
+fn getUnaryPrimitive(vm: *Vm, unary_primitive: UnaryPrimitive) *Value {
+    return vm.unary_primitives[@intFromEnum(unary_primitive)].ref();
+}
+
+fn getOperator(vm: *Vm, operator: Operator) *Value {
+    return vm.operators[@intFromEnum(operator)].ref();
 }
 
 fn parseTree(vm: *Vm, tree: *const Ast) !*Value {
@@ -130,6 +153,7 @@ fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
             if (unary_primitive == .list and args.len > 1) return vm.enlist(args);
             if (args.len > 1) return error.rank;
             switch (unary_primitive) {
+                .empty => unreachable, // TODO: This might not be unreachable.
                 inline else => |t| return @field(zk.unary_primitives, @tagName(t))(vm, args[0]),
             }
             return vm.applyUnaryPrimitive(unary_primitive, args[0]);
@@ -230,6 +254,7 @@ pub fn parse(vm: *Vm, x: *Value) !*Value {
 }
 
 pub fn eval(vm: *Vm, x: *Value) Vm.Error!*Value {
+    std.log.debug("eval: {f}", .{x.alt(vm)});
     switch (x.as) {
         .list => |value| {
             if (value.len == 1 and value[0].as == .symbol_list) return value[0].ref();
@@ -322,40 +347,30 @@ fn parseNode(vm: *Vm, node: Ast.Node.Index) !*Value {
             assert(nodes.len > 0);
             if (nodes.len == 1) return vm.parseNode(nodes[0]);
 
-            var list: std.ArrayList(*Value) = try .initCapacity(gpa, nodes.len + 1);
-            defer {
-                for (list.items) |v| v.deref(gpa);
-                list.deinit(gpa);
-            }
-            list.appendAssumeCapacity(try vm.createValue(.char, ';'));
-            for (nodes) |n| list.appendAssumeCapacity(try vm.parseNode(n));
+            var values: std.ArrayList(*Value) = try .initCapacity(gpa, nodes.len + 1);
+            defer values.deinit(gpa);
+            errdefer for (values.items) |v| v.deref(gpa);
 
-            try list.shrinkToLen(gpa);
-            return vm.createValue(.list, list.toOwnedSliceAssert());
+            values.appendAssumeCapacity(vm.getConstant(.semicolon));
+            for (nodes) |n| values.appendAssumeCapacity(try vm.parseNode(n));
+
+            return vm.createValue(.list, values.toOwnedSliceAssert());
         },
-        .empty => @panic("NYI"),
+        .empty => return vm.getUnaryPrimitive(.empty),
 
         .grouped_expression => return vm.parseNode(tree.nodeData(node).node_and_token[0]),
         .empty_list => return vm.allocValue(.list, 0),
         .list => {
             const nodes = tree.extraDataSlice(tree.nodeData(node).extra_range, Ast.Node.Index);
 
-            const value = try vm.allocValue(.list, nodes.len + 1);
-            var i: usize = 0;
-            errdefer {
-                for (value.as.list[0..i]) |v| v.deref(gpa);
-                gpa.destroy(value);
-            }
+            var values: std.ArrayList(*Value) = try .initCapacity(gpa, nodes.len + 1);
+            defer values.deinit(gpa);
+            errdefer for (values.items) |v| v.deref(gpa);
 
-            value.as.list[0] = vm.unary_primitives[@intFromEnum(UnaryPrimitive.list)].ref();
-            i += 1;
+            values.appendAssumeCapacity(vm.getUnaryPrimitive(.list));
+            for (nodes) |n| values.appendAssumeCapacity(try vm.parseNode(n));
 
-            for (nodes) |n| {
-                value.as.list[i] = try vm.parseNode(n);
-                i += 1;
-            }
-
-            return value;
+            return vm.createValue(.list, values.toOwnedSliceAssert());
         },
         .table_literal => @panic("NYI"),
 
@@ -364,122 +379,107 @@ fn parseNode(vm: *Vm, node: Ast.Node.Index) !*Value {
         .expr_block => {
             const nodes = tree.extraDataSlice(tree.nodeData(node).extra_range, Ast.Node.Index);
 
-            var list: std.ArrayList(*Value) = try .initCapacity(gpa, nodes.len + 1);
-            defer {
-                for (list.items) |v| v.deref(gpa);
-                list.deinit(gpa);
-            }
-            list.appendAssumeCapacity(try vm.createValue(.char, ';'));
-            for (nodes) |n| list.appendAssumeCapacity(try vm.parseNode(n));
+            var values: std.ArrayList(*Value) = try .initCapacity(gpa, nodes.len + 1);
+            defer values.deinit(gpa);
+            errdefer for (values.items) |v| v.deref(gpa);
 
-            try list.shrinkToLen(gpa);
-            return vm.createValue(.list, list.toOwnedSliceAssert());
+            values.appendAssumeCapacity(vm.getConstant(.semicolon));
+            for (nodes) |n| values.appendAssumeCapacity(try vm.parseNode(n));
+
+            return vm.createValue(.list, values.toOwnedSliceAssert());
         },
 
         .call => {
             const nodes = tree.extraDataSlice(tree.nodeData(node).extra_range, Ast.Node.Index);
+            assert(nodes.len > 1);
 
-            const value = try vm.allocValue(.list, nodes.len);
-            var i: usize = 0;
-            errdefer {
-                for (value.as.list[0..i]) |v| v.deref(gpa);
-                gpa.destroy(value);
-            }
+            var values: std.ArrayList(*Value) = try .initCapacity(gpa, nodes.len);
+            defer values.deinit(gpa);
+            errdefer for (values.items) |v| v.deref(gpa);
 
-            for (nodes) |n| {
-                value.as.list[i] = try vm.parseNode(n);
-                i += 1;
-            }
+            values.appendAssumeCapacity(try vm.parseNode(nodes[0]));
+            if (nodes.len == 2 and tree.nodeTag(nodes[1]) == .empty) {
+                values.appendAssumeCapacity(vm.getUnaryPrimitive(.identity));
+            } else for (nodes[1..]) |n| values.appendAssumeCapacity(try vm.parseNode(n));
 
-            return value;
+            return vm.createValue(.list, values.toOwnedSliceAssert());
         },
         .apply_unary => {
             const lhs, const rhs = tree.nodeData(node).node_and_node;
 
-            const rhs_value = try vm.parseNode(rhs);
-            errdefer rhs_value.deref(gpa);
+            var values: std.ArrayList(*Value) = try .initCapacity(gpa, 2);
+            defer values.deinit(gpa);
+            errdefer for (values.items) |v| v.deref(gpa);
 
-            const lhs_value = value: {
-                const prev_force_unary = vm.apply_unary;
-                defer vm.apply_unary = prev_force_unary;
+            {
+                const prev_apply_unary = vm.apply_unary;
+                defer vm.apply_unary = prev_apply_unary;
                 vm.apply_unary = true;
-                break :value try vm.parseNode(lhs);
-            };
-            errdefer lhs_value.deref(gpa);
+                values.appendAssumeCapacity(try vm.parseNode(lhs));
+            }
+            values.appendAssumeCapacity(try vm.parseNode(rhs));
 
-            const value = try vm.allocValue(.list, 2);
-            errdefer comptime unreachable;
-
-            value.as.list[0] = lhs_value;
-            value.as.list[1] = rhs_value;
-
-            return value;
+            return vm.createValue(.list, values.toOwnedSliceAssert());
         },
         .apply_binary => {
             const lhs, const maybe_rhs = tree.nodeData(node).node_and_opt_node;
             const op: Ast.Node.Index = @enumFromInt(tree.nodeMainToken(node));
-            if (maybe_rhs.unwrap()) |rhs| {
-                const rhs_value = try vm.parseNode(rhs);
-                errdefer rhs_value.deref(gpa);
 
-                const op_value = try vm.parseNode(op);
-                errdefer op_value.deref(gpa);
+            var values: std.ArrayList(*Value) = try .initCapacity(gpa, 3);
+            defer values.deinit(gpa);
+            errdefer for (values.items) |v| v.deref(gpa);
 
-                const lhs_value = try vm.parseNode(lhs);
-                errdefer lhs_value.deref(gpa);
+            values.appendAssumeCapacity(try vm.parseNode(op));
+            values.appendAssumeCapacity(try vm.parseNode(lhs));
+            values.appendAssumeCapacity(if (maybe_rhs.unwrap()) |rhs|
+                try vm.parseNode(rhs)
+            else
+                vm.getUnaryPrimitive(.empty));
 
-                const value = try vm.allocValue(.list, 3);
-                errdefer comptime unreachable;
-
-                value.as.list[0] = op_value;
-                value.as.list[1] = lhs_value;
-                value.as.list[2] = rhs_value;
-
-                return value;
-            } else unreachable;
+            return vm.createValue(.list, values.toOwnedSliceAssert());
         },
 
-        .bang => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.key)].ref() else vm.operators[@intFromEnum(Operator.dict)].ref(),
-        .hash => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.count)].ref() else vm.operators[@intFromEnum(Operator.take)].ref(),
-        .dollar => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.string)].ref() else vm.operators[@intFromEnum(Operator.cast)].ref(),
-        .percent => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.reciprocal)].ref() else vm.operators[@intFromEnum(Operator.divide)].ref(),
-        .ampersand => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.where)].ref() else vm.operators[@intFromEnum(Operator.@"and")].ref(),
-        .asterisk => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.first)].ref() else vm.operators[@intFromEnum(Operator.multiply)].ref(),
-        .plus => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.flip)].ref() else vm.operators[@intFromEnum(Operator.add)].ref(),
-        .comma => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.list)].ref() else vm.operators[@intFromEnum(Operator.join)].ref(),
-        .minus => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.neg)].ref() else vm.operators[@intFromEnum(Operator.subtract)].ref(),
-        .dot => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.value)].ref() else vm.operators[@intFromEnum(Operator.apply)].ref(),
-        .colon => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.identity)].ref() else vm.operators[@intFromEnum(Operator.assign)].ref(),
-        .angle_bracket_left => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.asc)].ref() else vm.operators[@intFromEnum(Operator.less_than)].ref(),
-        .equals => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.group)].ref() else vm.operators[@intFromEnum(Operator.equals)].ref(),
-        .angle_bracket_right => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.desc)].ref() else vm.operators[@intFromEnum(Operator.greater_than)].ref(),
-        .question_mark => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.distinct)].ref() else vm.operators[@intFromEnum(Operator.find)].ref(),
-        .at => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.type)].ref() else vm.operators[@intFromEnum(Operator.apply_at)].ref(),
-        .caret => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.null)].ref() else vm.operators[@intFromEnum(Operator.fill)].ref(),
-        .underscore => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.lower)].ref() else vm.operators[@intFromEnum(Operator.drop)].ref(),
-        .pipe => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.reverse)].ref() else vm.operators[@intFromEnum(Operator.@"or")].ref(),
-        .tilde => return if (vm.apply_unary) vm.unary_primitives[@intFromEnum(UnaryPrimitive.not)].ref() else vm.operators[@intFromEnum(Operator.match)].ref(),
+        .bang => return if (vm.apply_unary) vm.getUnaryPrimitive(.key) else vm.getOperator(.dict),
+        .hash => return if (vm.apply_unary) vm.getUnaryPrimitive(.count) else vm.getOperator(.take),
+        .dollar => return if (vm.apply_unary) vm.getUnaryPrimitive(.string) else vm.getOperator(.cast),
+        .percent => return if (vm.apply_unary) vm.getUnaryPrimitive(.reciprocal) else vm.getOperator(.divide),
+        .ampersand => return if (vm.apply_unary) vm.getUnaryPrimitive(.where) else vm.getOperator(.@"and"),
+        .asterisk => return if (vm.apply_unary) vm.getUnaryPrimitive(.first) else vm.getOperator(.multiply),
+        .plus => return if (vm.apply_unary) vm.getUnaryPrimitive(.flip) else vm.getOperator(.add),
+        .comma => return if (vm.apply_unary) vm.getUnaryPrimitive(.list) else vm.getOperator(.join),
+        .minus => return if (vm.apply_unary) vm.getUnaryPrimitive(.neg) else vm.getOperator(.subtract),
+        .dot => return if (vm.apply_unary) vm.getUnaryPrimitive(.value) else vm.getOperator(.apply),
+        .colon => return if (vm.apply_unary) vm.getUnaryPrimitive(.identity) else vm.getOperator(.assign),
+        .angle_bracket_left => return if (vm.apply_unary) vm.getUnaryPrimitive(.asc) else vm.getOperator(.less_than),
+        .equals => return if (vm.apply_unary) vm.getUnaryPrimitive(.group) else vm.getOperator(.equals),
+        .angle_bracket_right => return if (vm.apply_unary) vm.getUnaryPrimitive(.desc) else vm.getOperator(.greater_than),
+        .question_mark => return if (vm.apply_unary) vm.getUnaryPrimitive(.distinct) else vm.getOperator(.find),
+        .at => return if (vm.apply_unary) vm.getUnaryPrimitive(.type) else vm.getOperator(.apply_at),
+        .caret => return if (vm.apply_unary) vm.getUnaryPrimitive(.null) else vm.getOperator(.fill),
+        .underscore => return if (vm.apply_unary) vm.getUnaryPrimitive(.lower) else vm.getOperator(.drop),
+        .pipe => return if (vm.apply_unary) vm.getUnaryPrimitive(.reverse) else vm.getOperator(.@"or"),
+        .tilde => return if (vm.apply_unary) vm.getUnaryPrimitive(.not) else vm.getOperator(.match),
 
-        .bang_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.key)].ref(),
-        .hash_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.count)].ref(),
-        .dollar_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.string)].ref(),
-        .percent_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.reciprocal)].ref(),
-        .ampersand_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.where)].ref(),
-        .asterisk_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.first)].ref(),
-        .plus_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.flip)].ref(),
-        .comma_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.list)].ref(),
-        .minus_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.neg)].ref(),
-        .dot_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.value)].ref(),
-        .colon_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.identity)].ref(),
-        .angle_bracket_left_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.asc)].ref(),
-        .equals_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.group)].ref(),
-        .angle_bracket_right_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.desc)].ref(),
-        .question_mark_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.distinct)].ref(),
-        .at_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.type)].ref(),
-        .caret_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.null)].ref(),
-        .underscore_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.lower)].ref(),
-        .pipe_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.reverse)].ref(),
-        .tilde_colon => return vm.unary_primitives[@intFromEnum(UnaryPrimitive.not)].ref(),
+        .bang_colon => return vm.getUnaryPrimitive(.key),
+        .hash_colon => return vm.getUnaryPrimitive(.count),
+        .dollar_colon => return vm.getUnaryPrimitive(.string),
+        .percent_colon => return vm.getUnaryPrimitive(.reciprocal),
+        .ampersand_colon => return vm.getUnaryPrimitive(.where),
+        .asterisk_colon => return vm.getUnaryPrimitive(.first),
+        .plus_colon => return vm.getUnaryPrimitive(.flip),
+        .comma_colon => return vm.getUnaryPrimitive(.list),
+        .minus_colon => return vm.getUnaryPrimitive(.neg),
+        .dot_colon => return vm.getUnaryPrimitive(.value),
+        .colon_colon => return vm.getUnaryPrimitive(.identity),
+        .angle_bracket_left_colon => return vm.getUnaryPrimitive(.asc),
+        .equals_colon => return vm.getUnaryPrimitive(.group),
+        .angle_bracket_right_colon => return vm.getUnaryPrimitive(.desc),
+        .question_mark_colon => return vm.getUnaryPrimitive(.distinct),
+        .at_colon => return vm.getUnaryPrimitive(.type),
+        .caret_colon => return vm.getUnaryPrimitive(.null),
+        .underscore_colon => return vm.getUnaryPrimitive(.lower),
+        .pipe_colon => return vm.getUnaryPrimitive(.reverse),
+        .tilde_colon => return vm.getUnaryPrimitive(.not),
 
         .apostrophe => @panic("NYI"),
         .apostrophe_colon => @panic("NYI"),
