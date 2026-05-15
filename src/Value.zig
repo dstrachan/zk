@@ -34,6 +34,10 @@ pub fn deref(value: *Value, gpa: Allocator) void {
             .char_list => |list| gpa.free(list),
             .symbol => {},
             .symbol_list => |list| gpa.free(list),
+            .dict => |val| {
+                val.keys.deref(gpa);
+                val.values.deref(gpa);
+            },
             .unary_primitive => {},
             .operator => {},
         }
@@ -44,12 +48,16 @@ pub fn deref(value: *Value, gpa: Allocator) void {
 pub fn format(self: *Value, w: *Io.Writer, vm: *Vm) !void {
     switch (self.as) {
         .list => |value| {
-            try w.writeByte('(');
-            if (value.len > 0) {
-                try w.print("{f}", .{value[0].alt(vm)});
-                for (value[1..]) |v| try w.print(";{f}", .{v.alt(vm)});
+            if (value.len == 1) {
+                try w.print(",{f}", .{value[0].alt(vm)});
+            } else {
+                try w.writeByte('(');
+                if (value.len > 0) {
+                    try w.print("{f}", .{value[0].alt(vm)});
+                    for (value[1..]) |v| try w.print(";{f}", .{v.alt(vm)});
+                }
+                try w.writeByte(')');
             }
-            try w.writeByte(')');
         },
         .boolean => |value| try w.print("{d}b", .{@intFromBool(value)}),
         .boolean_list => |value| {
@@ -107,6 +115,13 @@ pub fn format(self: *Value, w: *Io.Writer, vm: *Vm) !void {
                 for (value) |v| try w.print("`{s}", .{vm.internedString(v)});
             }
         },
+        .dict => |value| {
+            if (value.keys.count() <= 1) {
+                try w.print("({f})!{f}", .{ value.keys.alt(vm), value.values.alt(vm) });
+            } else {
+                try w.print("{f}!{f}", .{ value.keys.alt(vm), value.values.alt(vm) });
+            }
+        },
         .unary_primitive => |value| try w.print("{f}", .{value}),
         .operator => |value| try w.print("{f}", .{value}),
     }
@@ -123,6 +138,25 @@ pub const Alt = struct {
 
 pub fn alt(value: *Value, vm: *Vm) std.fmt.Alt(Alt, Alt.format) {
     return .{ .data = .{ .vm = vm, .value = value } };
+}
+
+pub fn count(value: *Value) usize {
+    return switch (value.as) {
+        .list => |v| v.len,
+        .boolean => 1,
+        .boolean_list => |v| v.len,
+        .long => 1,
+        .long_list => |v| v.len,
+        .float => 1,
+        .float_list => |v| v.len,
+        .char => 1,
+        .char_list => |v| v.len,
+        .symbol => 1,
+        .symbol_list => |v| v.len,
+        .dict => |v| v.keys.count(),
+        .unary_primitive => 1,
+        .operator => 1,
+    };
 }
 
 pub const Type = enum(i8) {
@@ -164,7 +198,7 @@ pub const Type = enum(i8) {
     // time = -19,
     // time_list = 19,
     // table = 98,
-    // dict = 99,
+    dict = 99,
     // lambda = 100,
     unary_primitive = 101,
     operator = 102,
@@ -185,6 +219,7 @@ pub const Union = union(Type) {
     char_list: []u8,
     symbol: Symbol,
     symbol_list: []Symbol,
+    dict: Dictionary,
     unary_primitive: UnaryPrimitive,
     operator: Operator,
 };
@@ -221,6 +256,11 @@ pub const Long = enum(i64) {
 pub const Symbol = enum(u32) {
     empty = 0,
     _,
+};
+
+pub const Dictionary = struct {
+    keys: *Value,
+    values: *Value,
 };
 
 pub const UnaryPrimitive = enum {

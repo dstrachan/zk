@@ -14,7 +14,7 @@ const Operator = Value.Operator;
 const Vm = @This();
 
 pub const Error = Allocator.Error || std.fmt.ParseIntError || std.zig.ErrorBundle.RenderToStderrError ||
-    Io.Writer.Error || error{ parse, rank, nyi, type, domain };
+    Io.Writer.Error || error{ parse, rank, nyi, type, domain, identifier };
 
 io: Io,
 gpa: Allocator,
@@ -28,10 +28,15 @@ string_table: std.HashMapUnmanaged(
     std.hash_map.StringIndexContext,
     std.hash_map.default_max_load_percentage,
 ) = .empty,
-stack: [1024]*Value = undefined,
-stack_top: usize = 0,
+stack: std.ArrayList(*Value) = .empty,
+constants: [std.meta.fields(Constant).len]*Value = undefined,
 unary_primitives: [std.meta.fields(UnaryPrimitive).len]*Value = undefined,
 operators: [std.meta.fields(Operator).len]*Value = undefined,
+state: *Value = undefined,
+
+const Constant = enum(u8) {
+    empty_list,
+};
 
 pub fn init(io: Io, gpa: Allocator, stdout: *Io.Writer) !*Vm {
     const vm = try gpa.create(Vm);
@@ -41,6 +46,11 @@ pub fn init(io: Io, gpa: Allocator, stdout: *Io.Writer) !*Vm {
         .gpa = gpa,
         .stdout = stdout,
     };
+
+    var constants_created: usize = 0;
+    errdefer for (0..constants_created) |i| vm.constants[i].deref(vm.gpa);
+    vm.constants[@intFromEnum(Constant.empty_list)] = try vm.allocValue(.list, 0);
+    constants_created += 1;
 
     var unary_primitives_created: usize = 0;
     errdefer for (0..unary_primitives_created) |i| vm.unary_primitives[i].deref(vm.gpa);
@@ -58,14 +68,30 @@ pub fn init(io: Io, gpa: Allocator, stdout: *Io.Writer) !*Vm {
 
     assert(.empty == try vm.intern(""));
 
+    const keys = try vm.allocValue(.symbol_list, 1);
+    errdefer keys.deref(gpa);
+    keys.as.symbol_list[0] = .empty;
+
+    const values = try vm.allocValue(.list, 1);
+    errdefer values.deref(gpa);
+    values.as.list[0] = vm.unary_primitives[@intFromEnum(UnaryPrimitive.identity)].ref();
+
+    const dict = try vm.createValue(.dict, .{ .keys = keys, .values = values });
+    errdefer comptime unreachable;
+
+    vm.state = dict;
+
     return vm;
 }
 
 pub fn deinit(vm: *Vm) void {
     vm.string_table.deinit(vm.gpa);
     vm.string_bytes.deinit(vm.gpa);
+    vm.state.deref(vm.gpa);
+    for (vm.constants) |v| v.deref(vm.gpa);
     for (vm.unary_primitives) |v| v.deref(vm.gpa);
     for (vm.operators) |v| v.deref(vm.gpa);
+    vm.stack.deinit(vm.gpa);
     vm.gpa.destroy(vm);
 }
 
@@ -81,15 +107,11 @@ pub fn evalTree(vm: *Vm, tree: *const Ast) !*Value {
 }
 
 fn push(vm: *Vm, value: *Value) void {
-    vm.stack[vm.stack_top] = value;
-    vm.stack_top += 1;
+    vm.stack.append(vm.gpa, value) catch @panic("oom");
 }
 
 fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
     assert(args.len > 0);
-    std.log.debug("f = {f}", .{func.alt(vm)});
-    for (args) |a| std.log.debug("arg = {f}", .{a.alt(vm)});
-
     switch (func.as) {
         .list => return error.nyi,
         .boolean => return error.nyi,
@@ -102,61 +124,9 @@ fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
         .char_list => return error.nyi,
         .symbol => return error.nyi,
         .symbol_list => return error.nyi,
+        .dict => return error.nyi,
         .unary_primitive => |unary_primitive| {
-            if (unary_primitive == .list and args.len > 1) {
-                const first_type = @intFromEnum(args[0].as);
-                const is_vector = for (args[1..]) |a| {
-                    if (first_type != @intFromEnum(a.as)) break false;
-                } else true;
-                if (is_vector) {
-                    switch (args[0].as) {
-                        .list => {},
-                        .boolean => {
-                            const value = try vm.allocValue(.boolean_list, args.len);
-                            errdefer comptime unreachable;
-                            for (value.as.boolean_list, args) |*v, a| v.* = a.as.boolean;
-                            return value;
-                        },
-                        .boolean_list => {},
-                        .long => {
-                            const value = try vm.allocValue(.long_list, args.len);
-                            errdefer comptime unreachable;
-                            for (value.as.long_list, args) |*v, a| v.* = a.as.long;
-                            return value;
-                        },
-                        .long_list => {},
-                        .float => {
-                            const value = try vm.allocValue(.float_list, args.len);
-                            errdefer comptime unreachable;
-                            for (value.as.float_list, args) |*v, a| v.* = a.as.float;
-                            return value;
-                        },
-                        .float_list => {},
-                        .char => {
-                            const value = try vm.allocValue(.char_list, args.len);
-                            errdefer comptime unreachable;
-                            for (value.as.char_list, args) |*v, a| v.* = a.as.char;
-                            return value;
-                        },
-                        .char_list => {},
-                        .symbol => {
-                            const value = try vm.allocValue(.symbol_list, args.len);
-                            errdefer comptime unreachable;
-                            for (value.as.symbol_list, args) |*v, a| v.* = a.as.symbol;
-                            return value;
-                        },
-                        .symbol_list => {},
-                        .unary_primitive => {},
-                        .operator => {},
-                    }
-                }
-
-                const value = try vm.allocValue(.list, args.len);
-                errdefer comptime unreachable;
-                for (value.as.list, args) |*v, a| v.* = a.ref();
-                return value;
-            }
-
+            if (unary_primitive == .list and args.len > 1) return vm.enlist(args);
             if (args.len > 1) return error.rank;
             switch (unary_primitive) {
                 inline else => |t| return @field(zk.unary_primitives, @tagName(t))(vm, args[0]),
@@ -171,6 +141,61 @@ fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
             }
         },
     }
+}
+
+pub fn enlist(vm: *Vm, args: []*Value) !*Value {
+    const first_type = @intFromEnum(args[0].as);
+    const is_vector = for (args[1..]) |a| {
+        if (first_type != @intFromEnum(a.as)) break false;
+    } else true;
+    if (is_vector) {
+        switch (args[0].as) {
+            .list => {},
+            .boolean => {
+                const value = try vm.allocValue(.boolean_list, args.len);
+                errdefer comptime unreachable;
+                for (value.as.boolean_list, args) |*v, a| v.* = a.as.boolean;
+                return value;
+            },
+            .boolean_list => {},
+            .long => {
+                const value = try vm.allocValue(.long_list, args.len);
+                errdefer comptime unreachable;
+                for (value.as.long_list, args) |*v, a| v.* = a.as.long;
+                return value;
+            },
+            .long_list => {},
+            .float => {
+                const value = try vm.allocValue(.float_list, args.len);
+                errdefer comptime unreachable;
+                for (value.as.float_list, args) |*v, a| v.* = a.as.float;
+                return value;
+            },
+            .float_list => {},
+            .char => {
+                const value = try vm.allocValue(.char_list, args.len);
+                errdefer comptime unreachable;
+                for (value.as.char_list, args) |*v, a| v.* = a.as.char;
+                return value;
+            },
+            .char_list => {},
+            .symbol => {
+                const value = try vm.allocValue(.symbol_list, args.len);
+                errdefer comptime unreachable;
+                for (value.as.symbol_list, args) |*v, a| v.* = a.as.symbol;
+                return value;
+            },
+            .symbol_list => {},
+            .dict => return error.nyi,
+            .unary_primitive => {},
+            .operator => {},
+        }
+    }
+
+    const value = try vm.allocValue(.list, args.len);
+    errdefer comptime unreachable;
+    for (value.as.list, args) |*v, a| v.* = a.ref();
+    return value;
 }
 
 pub fn show(vm: *Vm, x: *Value) !*Value {
@@ -215,23 +240,68 @@ pub fn eval(vm: *Vm, x: *Value) Vm.Error!*Value {
                 return vm.eval(value[value.len - 1]);
             }
 
+            if (value[0].as == .operator and value[0].as.operator == .assign) {
+                if (value.len != 3) return error.rank;
+                switch (value[1].as) {
+                    .symbol => |identifier| {
+                        // TODO: Namespaces
+                        if (std.mem.findScalar(Symbol, vm.state.as.dict.keys.as.symbol_list, identifier)) |index| {
+                            _ = index; // autofix
+                            @panic("NYI: variable reassignment");
+                        } else {
+                            const new_value = try vm.eval(value[2]);
+                            errdefer new_value.deref(vm.gpa);
+
+                            // TODO: Resize slices
+                            const new_len = vm.state.as.dict.keys.as.symbol_list.len + 1;
+
+                            const dict = try vm.createValue(.dict, .{ .keys = undefined, .values = undefined });
+                            errdefer vm.gpa.destroy(dict);
+
+                            const keys = try vm.allocValue(.symbol_list, new_len);
+                            errdefer keys.deref(vm.gpa);
+                            @memcpy(keys.as.symbol_list[0 .. new_len - 1], vm.state.as.dict.keys.as.symbol_list);
+                            keys.as.symbol_list[new_len - 1] = identifier;
+                            dict.as.dict.keys = keys;
+
+                            const values = try vm.allocValue(.list, new_len);
+                            errdefer comptime unreachable;
+                            for (values.as.list[0 .. new_len - 1], vm.state.as.dict.values.as.list) |*new_v, old_v| {
+                                new_v.* = old_v.ref();
+                            }
+                            values.as.list[new_len - 1] = new_value;
+                            dict.as.dict.values = values;
+
+                            vm.state.deref(vm.gpa);
+                            vm.state = dict;
+
+                            return new_value.ref();
+                        }
+                    },
+                    inline else => |_, t| @panic("NYI: " ++ @tagName(t)),
+                }
+            }
+
             var it = std.mem.reverseIterator(value);
             while (it.next()) |entry| vm.push(try vm.eval(entry));
 
-            const stack = vm.stack[vm.stack_top - value.len .. vm.stack_top];
+            const stack = vm.stack.items[vm.stack.items.len - value.len ..];
+            defer vm.stack.shrinkRetainingCapacity(vm.stack.items.len - value.len);
+            defer for (stack) |v| v.deref(vm.gpa);
+
             // TODO: Remove reverse
             std.mem.reverse(*Value, stack);
-            defer {
-                vm.stack_top -= value.len;
-                for (stack) |v| v.deref(vm.gpa);
-            }
-
             const func = stack[0];
             const args = stack[1..];
 
             return vm.applyImpl(func, args);
         },
-        .symbol => @panic("NYI"),
+        .symbol => |identifier| {
+            // TODO: Namespaces
+            if (std.mem.findScalar(Symbol, vm.state.as.dict.keys.as.symbol_list, identifier)) |index| {
+                return vm.state.as.dict.values.as.list[index].ref();
+            } else return error.identifier; // TODO: Improve error message
+        },
         .symbol_list => |value| {
             assert(value.len == 1);
             return vm.createValue(.symbol, value[0]);

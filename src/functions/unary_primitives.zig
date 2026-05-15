@@ -11,22 +11,9 @@ pub fn identity(_: *Vm, x: *Value) !*Value {
 }
 
 pub fn flip(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn neg(vm: *Vm, x: *Value) !*Value {
@@ -64,6 +51,7 @@ pub fn neg(vm: *Vm, x: *Value) !*Value {
         .char_list => return error.nyi,
         .symbol => return error.type,
         .symbol_list => return error.type,
+        .dict => return error.nyi,
         .unary_primitive => return error.type,
         .operator => return error.type,
     }
@@ -82,161 +70,58 @@ pub fn first(vm: *Vm, x: *Value) !*Value {
         .char_list => |val| return vm.createValue(.char, val[0]),
         .symbol => return x.ref(),
         .symbol_list => |val| return vm.createValue(.symbol, val[0]),
+        .dict => |val| return first(vm, val.values),
         .unary_primitive => return x.ref(),
         .operator => return x.ref(),
     }
 }
 
 pub fn reciprocal(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn where(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn reverse(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn @"null"(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn group(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn asc(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn desc(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn string(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn list(vm: *Vm, x: *Value) !*Value {
@@ -307,6 +192,7 @@ pub fn list(vm: *Vm, x: *Value) !*Value {
             v.as.list[0] = x.ref();
             return v;
         },
+        .dict => return error.nyi,
         .unary_primitive => {
             const v = try vm.allocValue(.list, 1);
             errdefer comptime unreachable;
@@ -323,60 +209,19 @@ pub fn list(vm: *Vm, x: *Value) !*Value {
 }
 
 pub fn count(vm: *Vm, x: *Value) !*Value {
-    _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    return vm.createValue(.long, @intCast(x.count()));
 }
 
 pub fn lower(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn not(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn key(vm: *Vm, x: *Value) !*Value {
@@ -398,28 +243,16 @@ pub fn key(vm: *Vm, x: *Value) !*Value {
         .char_list => return error.nyi,
         .symbol => return error.nyi,
         .symbol_list => return error.nyi,
+        .dict => return error.nyi,
         .unary_primitive => return error.nyi,
         .operator => return error.nyi,
     }
 }
 
 pub fn distinct(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn @"type"(vm: *Vm, x: *Value) !*Value {
@@ -427,58 +260,19 @@ pub fn @"type"(vm: *Vm, x: *Value) !*Value {
 }
 
 pub fn value(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn read_text(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
 
 pub fn read_binary(vm: *Vm, x: *Value) !*Value {
+    _ = x; // autofix
     _ = vm; // autofix
-    switch (x.as) {
-        .list => return error.nyi,
-        .boolean => return error.nyi,
-        .boolean_list => return error.nyi,
-        .long => return error.nyi,
-        .long_list => return error.nyi,
-        .float => return error.nyi,
-        .float_list => return error.nyi,
-        .char => return error.nyi,
-        .char_list => return error.nyi,
-        .symbol => return error.nyi,
-        .symbol_list => return error.nyi,
-        .unary_primitive => return error.nyi,
-        .operator => return error.nyi,
-    }
+    unreachable;
 }
