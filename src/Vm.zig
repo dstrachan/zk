@@ -13,14 +13,14 @@ const Operator = Value.Operator;
 
 const Vm = @This();
 
-pub const Error = Allocator.Error || std.fmt.ParseIntError || std.zig.ErrorBundle.RenderToStderrError ||
-    Io.Writer.Error || error{ parse, rank, nyi, type, domain, identifier };
+const ParseError = Allocator.Error || std.fmt.ParseFloatError || Io.Writer.Error;
+pub const Error = ParseError || std.zig.ErrorBundle.RenderToStderrError ||
+    error{ rank, type, parse, nyi, domain, identifier };
 
 io: Io,
 gpa: Allocator,
 stdout: *Io.Writer,
 tree: *const Ast = undefined,
-apply_unary: bool = false,
 string_bytes: std.ArrayList(u8) = .empty,
 string_table: std.HashMapUnmanaged(
     u32,
@@ -288,7 +288,7 @@ pub fn parse(vm: *Vm, x: *Value) !*Value {
     return vm.parseTree(&tree);
 }
 
-pub fn eval(vm: *Vm, x: *Value) Vm.Error!*Value {
+pub fn eval(vm: *Vm, x: *Value) Error!*Value {
     std.log.debug("eval: {f}", .{x.alt(vm)});
     switch (x.as) {
         .list => |value| {
@@ -372,7 +372,7 @@ pub fn eval(vm: *Vm, x: *Value) Vm.Error!*Value {
     }
 }
 
-fn parseNode(vm: *Vm, node: Ast.Node.Index) !*Value {
+fn parseNode(vm: *Vm, node: Ast.Node.Index) ParseError!*Value {
     const tree = vm.tree;
     const gpa = vm.gpa;
 
@@ -446,12 +446,7 @@ fn parseNode(vm: *Vm, node: Ast.Node.Index) !*Value {
             defer values.deinit(gpa);
             errdefer for (values.items) |v| v.deref(gpa);
 
-            {
-                const prev_apply_unary = vm.apply_unary;
-                defer vm.apply_unary = prev_apply_unary;
-                vm.apply_unary = true;
-                values.appendAssumeCapacity(try vm.parseNode(lhs));
-            }
+            values.appendAssumeCapacity(try vm.parseUnaryNode(lhs));
             values.appendAssumeCapacity(try vm.parseNode(rhs));
 
             return vm.createValue(.list, values.toOwnedSliceAssert());
@@ -474,26 +469,26 @@ fn parseNode(vm: *Vm, node: Ast.Node.Index) !*Value {
             return vm.createValue(.list, values.toOwnedSliceAssert());
         },
 
-        .bang => return if (vm.apply_unary) vm.getUnaryPrimitive(.key) else vm.getOperator(.dict),
-        .hash => return if (vm.apply_unary) vm.getUnaryPrimitive(.count) else vm.getOperator(.take),
-        .dollar => return if (vm.apply_unary) vm.getUnaryPrimitive(.string) else vm.getOperator(.cast),
-        .percent => return if (vm.apply_unary) vm.getUnaryPrimitive(.reciprocal) else vm.getOperator(.divide),
-        .ampersand => return if (vm.apply_unary) vm.getUnaryPrimitive(.where) else vm.getOperator(.@"and"),
-        .asterisk => return if (vm.apply_unary) vm.getUnaryPrimitive(.first) else vm.getOperator(.multiply),
-        .plus => return if (vm.apply_unary) vm.getUnaryPrimitive(.flip) else vm.getOperator(.add),
-        .comma => return if (vm.apply_unary) vm.getUnaryPrimitive(.list) else vm.getOperator(.join),
-        .minus => return if (vm.apply_unary) vm.getUnaryPrimitive(.neg) else vm.getOperator(.subtract),
-        .dot => return if (vm.apply_unary) vm.getUnaryPrimitive(.value) else vm.getOperator(.apply),
-        .colon => return if (vm.apply_unary) vm.getUnaryPrimitive(.identity) else vm.getOperator(.assign),
-        .angle_bracket_left => return if (vm.apply_unary) vm.getUnaryPrimitive(.asc) else vm.getOperator(.less_than),
-        .equals => return if (vm.apply_unary) vm.getUnaryPrimitive(.group) else vm.getOperator(.equals),
-        .angle_bracket_right => return if (vm.apply_unary) vm.getUnaryPrimitive(.desc) else vm.getOperator(.greater_than),
-        .question_mark => return if (vm.apply_unary) vm.getUnaryPrimitive(.distinct) else vm.getOperator(.find),
-        .at => return if (vm.apply_unary) vm.getUnaryPrimitive(.type) else vm.getOperator(.apply_at),
-        .caret => return if (vm.apply_unary) vm.getUnaryPrimitive(.null) else vm.getOperator(.fill),
-        .underscore => return if (vm.apply_unary) vm.getUnaryPrimitive(.lower) else vm.getOperator(.drop),
-        .pipe => return if (vm.apply_unary) vm.getUnaryPrimitive(.reverse) else vm.getOperator(.@"or"),
-        .tilde => return if (vm.apply_unary) vm.getUnaryPrimitive(.not) else vm.getOperator(.match),
+        .bang => return vm.getOperator(.dict),
+        .hash => return vm.getOperator(.take),
+        .dollar => return vm.getOperator(.cast),
+        .percent => return vm.getOperator(.divide),
+        .ampersand => return vm.getOperator(.@"and"),
+        .asterisk => return vm.getOperator(.multiply),
+        .plus => return vm.getOperator(.add),
+        .comma => return vm.getOperator(.join),
+        .minus => return vm.getOperator(.subtract),
+        .dot => return vm.getOperator(.apply),
+        .colon => return vm.getOperator(.assign),
+        .angle_bracket_left => return vm.getOperator(.less_than),
+        .equals => return vm.getOperator(.equals),
+        .angle_bracket_right => return vm.getOperator(.greater_than),
+        .question_mark => return vm.getOperator(.find),
+        .at => return vm.getOperator(.apply_at),
+        .caret => return vm.getOperator(.fill),
+        .underscore => return vm.getOperator(.drop),
+        .pipe => return vm.getOperator(.@"or"),
+        .tilde => return vm.getOperator(.match),
 
         .bang_colon => return vm.getUnaryPrimitive(.key),
         .hash_colon => return vm.getUnaryPrimitive(.count),
@@ -640,6 +635,35 @@ fn parseNode(vm: *Vm, node: Ast.Node.Index) !*Value {
             const symbol = try vm.intern(slice);
             return vm.createValue(.symbol, symbol);
         },
+    }
+}
+
+fn parseUnaryNode(vm: *Vm, node: Ast.Node.Index) !*Value {
+    const tree = vm.tree;
+
+    switch (tree.nodeTag(node)) {
+        .bang => return vm.getUnaryPrimitive(.key),
+        .hash => return vm.getUnaryPrimitive(.count),
+        .dollar => return vm.getUnaryPrimitive(.string),
+        .percent => return vm.getUnaryPrimitive(.reciprocal),
+        .ampersand => return vm.getUnaryPrimitive(.where),
+        .asterisk => return vm.getUnaryPrimitive(.first),
+        .plus => return vm.getUnaryPrimitive(.flip),
+        .comma => return vm.getUnaryPrimitive(.list),
+        .minus => return vm.getUnaryPrimitive(.neg),
+        .dot => return vm.getUnaryPrimitive(.value),
+        .colon => return vm.getUnaryPrimitive(.identity),
+        .angle_bracket_left => return vm.getUnaryPrimitive(.asc),
+        .equals => return vm.getUnaryPrimitive(.group),
+        .angle_bracket_right => return vm.getUnaryPrimitive(.desc),
+        .question_mark => return vm.getUnaryPrimitive(.distinct),
+        .at => return vm.getUnaryPrimitive(.type),
+        .caret => return vm.getUnaryPrimitive(.null),
+        .underscore => return vm.getUnaryPrimitive(.lower),
+        .pipe => return vm.getUnaryPrimitive(.reverse),
+        .tilde => return vm.getUnaryPrimitive(.not),
+
+        else => return vm.parseNode(node),
     }
 }
 
