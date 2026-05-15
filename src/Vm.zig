@@ -125,6 +125,7 @@ fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
         .symbol => return error.nyi,
         .symbol_list => return error.nyi,
         .dict => return error.nyi,
+        .lambda => return error.nyi,
         .unary_primitive => |unary_primitive| {
             if (unary_primitive == .list and args.len > 1) return vm.enlist(args);
             if (args.len > 1) return error.rank;
@@ -187,6 +188,7 @@ pub fn enlist(vm: *Vm, args: []*Value) !*Value {
             },
             .symbol_list => {},
             .dict => return error.nyi,
+            .lambda => {},
             .unary_primitive => {},
             .operator => {},
         }

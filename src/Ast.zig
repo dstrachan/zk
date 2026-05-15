@@ -122,6 +122,24 @@ pub fn extraDataSlice(tree: Ast, range: Node.SubRange, comptime T: type) []const
     return @ptrCast(tree.extra_data[@intFromEnum(range.start)..@intFromEnum(range.end)]);
 }
 
+pub fn extraData(tree: Ast, index: ExtraIndex, comptime T: type) T {
+    const fields = std.meta.fields(T);
+    var result: T = undefined;
+    inline for (fields, 0..) |field, i| {
+        @field(result, field.name) = switch (field.type) {
+            bool => tree.extra_data[@intFromEnum(index) + i] == 1,
+            Node.Index,
+            Node.OptionalIndex,
+            OptionalTokenIndex,
+            ExtraIndex,
+            => @enumFromInt(tree.extra_data[@intFromEnum(index) + i]),
+            TokenIndex => tree.extra_data[@intFromEnum(index) + i],
+            else => @compileError("unexpected field type: " ++ @typeName(field.type)),
+        };
+    }
+    return result;
+}
+
 pub fn deinit(tree: *Ast, gpa: Allocator) void {
     tree.tokens.deinit(gpa);
     tree.nodes.deinit(gpa);

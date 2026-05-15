@@ -52,6 +52,7 @@ pub fn neg(vm: *Vm, x: *Value) !*Value {
         .symbol => return error.type,
         .symbol_list => return error.type,
         .dict => return error.nyi,
+        .lambda => return error.type,
         .unary_primitive => return error.type,
         .operator => return error.type,
     }
@@ -71,6 +72,7 @@ pub fn first(vm: *Vm, x: *Value) !*Value {
         .symbol => return x.ref(),
         .symbol_list => |val| return vm.createValue(.symbol, val[0]),
         .dict => |val| return first(vm, val.values),
+        .lambda => return x.ref(),
         .unary_primitive => return x.ref(),
         .operator => return x.ref(),
     }
@@ -193,6 +195,12 @@ pub fn list(vm: *Vm, x: *Value) !*Value {
             return v;
         },
         .dict => return error.nyi,
+        .lambda => {
+            const v = try vm.allocValue(.list, 1);
+            errdefer comptime unreachable;
+            v.as.list[0] = x.ref();
+            return v;
+        },
         .unary_primitive => {
             const v = try vm.allocValue(.list, 1);
             errdefer comptime unreachable;
@@ -244,6 +252,7 @@ pub fn key(vm: *Vm, x: *Value) !*Value {
         .symbol => return error.nyi,
         .symbol_list => return error.nyi,
         .dict => return error.nyi,
+        .lambda => return error.nyi,
         .unary_primitive => return error.nyi,
         .operator => return error.nyi,
     }

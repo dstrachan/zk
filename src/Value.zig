@@ -38,6 +38,15 @@ pub fn deref(value: *Value, gpa: Allocator) void {
                 val.keys.deref(gpa);
                 val.values.deref(gpa);
             },
+            .lambda => |val| {
+                gpa.free(val.bytecode);
+                gpa.free(val.params);
+                gpa.free(val.locals);
+                gpa.free(val.globals);
+                for (val.constants) |v| v.deref(gpa);
+                gpa.free(val.constants);
+                gpa.free(val.source);
+            },
             .unary_primitive => {},
             .operator => {},
         }
@@ -122,6 +131,7 @@ pub fn format(self: *Value, w: *Io.Writer, vm: *Vm) !void {
                 try w.print("{f}!{f}", .{ value.keys.alt(vm), value.values.alt(vm) });
             }
         },
+        .lambda => |value| try w.print("{s}", .{value.source}),
         .unary_primitive => |value| try w.print("{f}", .{value}),
         .operator => |value| try w.print("{f}", .{value}),
     }
@@ -154,6 +164,7 @@ pub fn count(value: *Value) usize {
         .symbol => 1,
         .symbol_list => |v| v.len,
         .dict => |v| v.keys.count(),
+        .lambda => 1,
         .unary_primitive => 1,
         .operator => 1,
     };
@@ -199,7 +210,7 @@ pub const Type = enum(i8) {
     // time_list = 19,
     // table = 98,
     dict = 99,
-    // lambda = 100,
+    lambda = 100,
     unary_primitive = 101,
     operator = 102,
     // iterator = 103,
@@ -220,6 +231,7 @@ pub const Union = union(Type) {
     symbol: Symbol,
     symbol_list: []Symbol,
     dict: Dictionary,
+    lambda: Lambda,
     unary_primitive: UnaryPrimitive,
     operator: Operator,
 };
@@ -261,6 +273,15 @@ pub const Symbol = enum(u32) {
 pub const Dictionary = struct {
     keys: *Value,
     values: *Value,
+};
+
+pub const Lambda = struct {
+    bytecode: []const u8,
+    params: []const Symbol,
+    locals: []const Symbol,
+    globals: []const Symbol,
+    constants: []*Value,
+    source: []const u8,
 };
 
 pub const UnaryPrimitive = enum {
