@@ -188,6 +188,28 @@ pub fn count(value: *Value) usize {
     };
 }
 
+pub fn rank(value: *Value) usize {
+    // TODO: Should non-applicable values return 'type?
+    return switch (value.as) {
+        .list => 1,
+        .boolean => 1,
+        .boolean_list => 1,
+        .long => 1,
+        .long_list => 1,
+        .float => 1,
+        .float_list => 1,
+        .char => 1,
+        .char_list => 1,
+        .symbol => 1,
+        .symbol_list => 1,
+        .dict => 1,
+        .lambda => |lambda| lambda.params.len,
+        .unary_primitive => 1,
+        .operator => 2,
+        .projection => |projection| projection.callee.rank(),
+    };
+}
+
 pub const Type = enum(i8) {
     list = 0,
     boolean = -1,

@@ -198,7 +198,6 @@ fn cmdRepl(io: Io, gpa: Allocator, args: []const []const u8) !void {
 
             const value = vm.evalTree(&tree) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
-                error.Overflow => return error.Overflow,
                 error.InvalidCharacter => return error.InvalidCharacter,
                 else => {
                     try stderr.print("'{t}\n", .{err});

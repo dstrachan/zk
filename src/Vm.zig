@@ -198,7 +198,37 @@ fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
                 }
             }
         },
-        .projection => return error.nyi,
+        .projection => |projection| {
+            const rank = projection.callee.rank();
+            const args_len = len: {
+                var len: usize = projection.args.len;
+                for (projection.args) |a| {
+                    if (a.as == .unary_primitive and a.as.unary_primitive == .empty) len -= 1;
+                }
+                break :len len;
+            } + args.len;
+            if (args_len > rank) return error.rank;
+
+            var new_args: std.ArrayList(*Value) = try .initCapacity(vm.gpa, args_len);
+            defer new_args.deinit(vm.gpa);
+
+            var j: usize = 0;
+            for (0..args_len) |i| {
+                if (i < projection.args.len) {
+                    if (projection.args[i].as == .unary_primitive and projection.args[i].as.unary_primitive == .empty) {
+                        new_args.appendAssumeCapacity(args[j]);
+                        j += 1;
+                    } else {
+                        new_args.appendAssumeCapacity(projection.args[i]);
+                    }
+                } else {
+                    new_args.appendAssumeCapacity(args[j]);
+                    j += 1;
+                }
+            }
+
+            return vm.applyImpl(projection.callee, new_args.items);
+        },
     }
 }
 
@@ -713,7 +743,10 @@ fn testVm(source: [:0]const u8, comptime tag: Value.Type, expected: anytype) !vo
     const io = std.testing.io;
     const gpa = std.testing.allocator;
 
-    var vm: *Vm = try .init(io, gpa);
+    var stdout_writer = Io.File.stdout().writer(io, &.{});
+    const stdout = &stdout_writer.interface;
+
+    var vm: *Vm = try .init(io, gpa, stdout);
     defer vm.deinit();
 
     var tree: Ast = try .parse(gpa, source);
@@ -743,6 +776,14 @@ fn testVm(source: [:0]const u8, comptime tag: Value.Type, expected: anytype) !vo
         .unary_primitive,
         .operator,
         => try std.testing.expectEqual(expected, @field(value.as, @tagName(tag))),
+        .projection,
+        => {
+            try std.testing.expectEqual(expected.callee, @as(Value.Type, value.as.projection.callee.as));
+            try std.testing.expectEqual(expected.args, value.as.projection.args.len);
+        },
+        .dict,
+        .lambda,
+        => @panic("NYI: " ++ @tagName(tag)),
     }
 }
 
@@ -759,4 +800,14 @@ test "number list literal with null/inf" {
     try testVm("1 2 0n 0N -0w -0W 0w 0W 3 4", .long_list, &.{
         1, 2, long_null, long_null, long_neg_inf, long_neg_inf, long_inf, long_inf, 3, 4,
     });
+}
+
+test "projections" {
+    try testVm("+[1][2]", .long, 3);
+    try testVm("+[1;][2]", .long, 3);
+    try testVm("+[;2][1]", .long, 3);
+    try testVm("+[;][1]", .projection, .{ .callee = .operator, .args = 1 });
+    try testVm("+[;][1;]", .projection, .{ .callee = .operator, .args = 2 });
+    try testVm("+[;][;2]", .projection, .{ .callee = .operator, .args = 2 });
+    try testVm("+[;][;]", .projection, .{ .callee = .operator, .args = 2 });
 }
