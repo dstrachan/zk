@@ -57,6 +57,13 @@ pub fn deref(value: *Value, gpa: Allocator) void {
                 for (val.args) |v| v.deref(gpa);
                 gpa.free(val.args);
             },
+            inline .each,
+            .over,
+            .scan,
+            .each_prior,
+            .each_right,
+            .each_left,
+            => |val| val.value.deref(gpa),
         }
         gpa.destroy(value);
     }
@@ -155,6 +162,12 @@ pub fn format(self: *Value, w: *Io.Writer, vm: *Vm) !void {
             }
             try w.writeByte(']');
         },
+        .each => |value| try w.print("{f}'", .{value.value.alt(vm)}),
+        .over => |value| try w.print("{f}/", .{value.value.alt(vm)}),
+        .scan => |value| try w.print("{f}\\", .{value.value.alt(vm)}),
+        .each_prior => |value| try w.print("{f}':", .{value.value.alt(vm)}),
+        .each_right => |value| try w.print("{f}/:", .{value.value.alt(vm)}),
+        .each_left => |value| try w.print("{f}\\:", .{value.value.alt(vm)}),
     }
 }
 
@@ -190,6 +203,12 @@ pub fn count(value: *Value) usize {
         .operator => 1,
         .iterator => 1,
         .projection => 1,
+        .each => 1,
+        .over => 1,
+        .scan => 1,
+        .each_prior => 1,
+        .each_right => 1,
+        .each_left => 1,
     };
 }
 
@@ -213,6 +232,12 @@ pub fn rank(value: *Value) usize {
         .operator => 2,
         .iterator => 1, // TODO: Does an iterator have a fixed rank?
         .projection => |projection| projection.callee.rank(),
+        .each => 1,
+        .over => 1,
+        .scan => 1,
+        .each_prior => 1,
+        .each_right => 1,
+        .each_left => 1,
     };
 }
 
@@ -262,6 +287,12 @@ pub const Type = enum(i8) {
     iterator = 103,
     projection = 104,
     // composition = 105,
+    each = 106,
+    over = 107,
+    scan = 108,
+    each_prior = 109,
+    each_right = 110,
+    each_left = 111,
 };
 
 pub const Union = union(Type) {
@@ -282,6 +313,12 @@ pub const Union = union(Type) {
     operator: Operator,
     iterator: Iterator,
     projection: Projection,
+    each: Each,
+    over: Over,
+    scan: Scan,
+    each_prior: EachPrior,
+    each_right: EachRight,
+    each_left: EachLeft,
 };
 
 pub const Long = enum(i64) {
@@ -463,6 +500,30 @@ pub const Iterator = enum {
 pub const Projection = struct {
     callee: *Value,
     args: []const *Value,
+};
+
+pub const Each = struct {
+    value: *Value,
+};
+
+pub const Over = struct {
+    value: *Value,
+};
+
+pub const Scan = struct {
+    value: *Value,
+};
+
+pub const EachPrior = struct {
+    value: *Value,
+};
+
+pub const EachRight = struct {
+    value: *Value,
+};
+
+pub const EachLeft = struct {
+    value: *Value,
 };
 
 test {

@@ -57,6 +57,12 @@ pub fn neg(vm: *Vm, x: *Value) !*Value {
         .operator => return error.type,
         .iterator => return error.type,
         .projection => return error.type,
+        .each => return error.type,
+        .over => return error.type,
+        .scan => return error.type,
+        .each_prior => return error.type,
+        .each_right => return error.type,
+        .each_left => return error.type,
     }
 }
 
@@ -73,6 +79,12 @@ pub fn first(vm: *Vm, x: *Value) !*Value {
         .operator,
         .iterator,
         .projection,
+        .each,
+        .over,
+        .scan,
+        .each_prior,
+        .each_right,
+        .each_left,
         => return x.ref(),
         .boolean_list => |val| return vm.createValue(.boolean, val[0]),
         .long_list => |val| return vm.createValue(.long, val[0]),
@@ -144,6 +156,12 @@ pub fn list(vm: *Vm, x: *Value) !*Value {
         .operator,
         .iterator,
         .projection,
+        .each,
+        .over,
+        .scan,
+        .each_prior,
+        .each_right,
+        .each_left,
         => {
             const v = try vm.allocValue(.list, 1);
             errdefer comptime unreachable;
@@ -225,6 +243,12 @@ pub fn key(vm: *Vm, x: *Value) !*Value {
         .operator => return error.nyi,
         .iterator => return error.nyi,
         .projection => return error.nyi,
+        .each => return error.nyi,
+        .over => return error.nyi,
+        .scan => return error.nyi,
+        .each_prior => return error.nyi,
+        .each_right => return error.nyi,
+        .each_left => return error.nyi,
     }
 }
 

@@ -244,6 +244,12 @@ fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
 
             return vm.applyImpl(projection.callee, new_args.items);
         },
+        .each => return error.nyi,
+        .over => return error.nyi,
+        .scan => return error.nyi,
+        .each_prior => return error.nyi,
+        .each_right => return error.nyi,
+        .each_left => return error.nyi,
     }
 }
 
@@ -261,6 +267,12 @@ pub fn enlist(vm: *Vm, args: []*Value) !*Value {
             .operator,
             .iterator,
             .projection,
+            .each,
+            .over,
+            .scan,
+            .each_prior,
+            .each_right,
+            .each_left,
             => break :is_vector false,
             .boolean, .long, .float, .char, .symbol, .dict => @intFromEnum(args[0].as),
         };
@@ -281,6 +293,12 @@ pub fn enlist(vm: *Vm, args: []*Value) !*Value {
             .operator,
             .iterator,
             .projection,
+            .each,
+            .over,
+            .scan,
+            .each_prior,
+            .each_right,
+            .each_left,
             => unreachable,
             .boolean => {
                 const value = try vm.allocValue(.boolean_list, args.len);
@@ -574,12 +592,60 @@ fn parseNode(vm: *Vm, node: Ast.Node.Index) ParseError!*Value {
         .pipe_colon => return vm.getUnaryPrimitive(.reverse),
         .tilde_colon => return vm.getUnaryPrimitive(.not),
 
-        .apostrophe => return vm.getIterator(.each),
-        .apostrophe_colon => return vm.getIterator(.each_prior),
-        .slash => return vm.getIterator(.over),
-        .slash_colon => return vm.getIterator(.each_right),
-        .backslash => return vm.getIterator(.scan),
-        .backslash_colon => return vm.getIterator(.each_left),
+        .apostrophe => {
+            if (tree.nodeData(node).opt_node.unwrap()) |lhs| {
+                const value = try vm.parseNode(lhs);
+                errdefer value.deref(gpa);
+                return vm.createValue(.each, .{ .value = value });
+            } else {
+                return vm.getIterator(.each);
+            }
+        },
+        .apostrophe_colon => {
+            if (tree.nodeData(node).opt_node.unwrap()) |lhs| {
+                const value = try vm.parseNode(lhs);
+                errdefer value.deref(gpa);
+                return vm.createValue(.each_prior, .{ .value = value });
+            } else {
+                return vm.getIterator(.each_prior);
+            }
+        },
+        .slash => {
+            if (tree.nodeData(node).opt_node.unwrap()) |lhs| {
+                const value = try vm.parseNode(lhs);
+                errdefer value.deref(gpa);
+                return vm.createValue(.over, .{ .value = value });
+            } else {
+                return vm.getIterator(.over);
+            }
+        },
+        .slash_colon => {
+            if (tree.nodeData(node).opt_node.unwrap()) |lhs| {
+                const value = try vm.parseNode(lhs);
+                errdefer value.deref(gpa);
+                return vm.createValue(.each_right, .{ .value = value });
+            } else {
+                return vm.getIterator(.each_right);
+            }
+        },
+        .backslash => {
+            if (tree.nodeData(node).opt_node.unwrap()) |lhs| {
+                const value = try vm.parseNode(lhs);
+                errdefer value.deref(gpa);
+                return vm.createValue(.scan, .{ .value = value });
+            } else {
+                return vm.getIterator(.scan);
+            }
+        },
+        .backslash_colon => {
+            if (tree.nodeData(node).opt_node.unwrap()) |lhs| {
+                const value = try vm.parseNode(lhs);
+                errdefer value.deref(gpa);
+                return vm.createValue(.each_left, .{ .value = value });
+            } else {
+                return vm.getIterator(.each_left);
+            }
+        },
 
         .number_literal => {
             const main_token = tree.nodeMainToken(node);
