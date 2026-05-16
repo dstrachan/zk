@@ -10,6 +10,7 @@ const Long = Value.Long;
 const Symbol = Value.Symbol;
 const UnaryPrimitive = Value.UnaryPrimitive;
 const Operator = Value.Operator;
+const Iterator = Value.Iterator;
 
 const Vm = @This();
 
@@ -32,6 +33,7 @@ stack: std.ArrayList(*Value) = .empty,
 constants: [std.meta.fields(Constant).len]*Value = undefined,
 unary_primitives: [std.meta.fields(UnaryPrimitive).len]*Value = undefined,
 operators: [std.meta.fields(Operator).len]*Value = undefined,
+iterators: [std.meta.fields(Iterator).len]*Value = undefined,
 state: *Value = undefined,
 
 const Constant = enum(u8) {
@@ -78,6 +80,13 @@ pub fn init(io: Io, gpa: Allocator, stdout: *Io.Writer) !*Vm {
         operators_created += 1;
     }
 
+    var iterators_created: usize = 0;
+    errdefer for (0..iterators_created) |i| vm.iterators[i].deref(vm.gpa);
+    inline for (&vm.iterators, 0..) |*iterator, i| {
+        iterator.* = try vm.createValue(.iterator, @enumFromInt(i));
+        iterators_created += 1;
+    }
+
     const keys = try vm.allocValue(.symbol_list, 1);
     errdefer keys.deref(gpa);
     keys.as.symbol_list[0] = .empty;
@@ -101,6 +110,7 @@ pub fn deinit(vm: *Vm) void {
     for (vm.constants) |v| v.deref(vm.gpa);
     for (vm.unary_primitives) |v| v.deref(vm.gpa);
     for (vm.operators) |v| v.deref(vm.gpa);
+    for (vm.iterators) |v| v.deref(vm.gpa);
     assert(vm.stack.items.len == 0);
     vm.stack.deinit(vm.gpa);
     vm.gpa.destroy(vm);
@@ -116,6 +126,10 @@ fn getUnaryPrimitive(vm: *Vm, unary_primitive: UnaryPrimitive) *Value {
 
 fn getOperator(vm: *Vm, operator: Operator) *Value {
     return vm.operators[@intFromEnum(operator)].ref();
+}
+
+fn getIterator(vm: *Vm, iterator: Iterator) *Value {
+    return vm.iterators[@intFromEnum(iterator)].ref();
 }
 
 fn parseTree(vm: *Vm, tree: *const Ast) !*Value {
@@ -198,6 +212,7 @@ fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
                 }
             }
         },
+        .iterator => return error.nyi,
         .projection => |projection| {
             const rank = projection.callee.rank();
             const args_len = len: {
@@ -233,60 +248,78 @@ fn applyImpl(vm: *Vm, func: *Value, args: []*Value) !*Value {
 }
 
 pub fn enlist(vm: *Vm, args: []*Value) !*Value {
-    const first_type = @intFromEnum(args[0].as);
-    const is_vector = for (args[1..]) |a| {
-        if (first_type != @intFromEnum(a.as)) break false;
-    } else true;
+    const is_vector = is_vector: {
+        const first_type = switch (args[0].as) {
+            .list,
+            .boolean_list,
+            .long_list,
+            .float_list,
+            .char_list,
+            .symbol_list,
+            .lambda,
+            .unary_primitive,
+            .operator,
+            .iterator,
+            .projection,
+            => break :is_vector false,
+            .boolean, .long, .float, .char, .symbol, .dict => @intFromEnum(args[0].as),
+        };
+        break :is_vector for (args[1..]) |a| {
+            if (first_type != @intFromEnum(a.as)) break false;
+        } else true;
+    };
     if (is_vector) {
         switch (args[0].as) {
-            .list => {},
+            .list,
+            .boolean_list,
+            .long_list,
+            .float_list,
+            .char_list,
+            .symbol_list,
+            .lambda,
+            .unary_primitive,
+            .operator,
+            .iterator,
+            .projection,
+            => unreachable,
             .boolean => {
                 const value = try vm.allocValue(.boolean_list, args.len);
                 errdefer comptime unreachable;
                 for (value.as.boolean_list, args) |*v, a| v.* = a.as.boolean;
                 return value;
             },
-            .boolean_list => {},
             .long => {
                 const value = try vm.allocValue(.long_list, args.len);
                 errdefer comptime unreachable;
                 for (value.as.long_list, args) |*v, a| v.* = a.as.long;
                 return value;
             },
-            .long_list => {},
             .float => {
                 const value = try vm.allocValue(.float_list, args.len);
                 errdefer comptime unreachable;
                 for (value.as.float_list, args) |*v, a| v.* = a.as.float;
                 return value;
             },
-            .float_list => {},
             .char => {
                 const value = try vm.allocValue(.char_list, args.len);
                 errdefer comptime unreachable;
                 for (value.as.char_list, args) |*v, a| v.* = a.as.char;
                 return value;
             },
-            .char_list => {},
             .symbol => {
                 const value = try vm.allocValue(.symbol_list, args.len);
                 errdefer comptime unreachable;
                 for (value.as.symbol_list, args) |*v, a| v.* = a.as.symbol;
                 return value;
             },
-            .symbol_list => {},
             .dict => return error.nyi,
-            .lambda => {},
-            .unary_primitive => {},
-            .operator => {},
-            .projection => {},
         }
+    } else {
+        const value = try vm.allocValue(.list, args.len);
+        errdefer comptime unreachable;
+        for (value.as.list, args) |*v, a| v.* = a.ref();
+        return value;
     }
-
-    const value = try vm.allocValue(.list, args.len);
-    errdefer comptime unreachable;
-    for (value.as.list, args) |*v, a| v.* = a.ref();
-    return value;
 }
 
 pub fn show(vm: *Vm, x: *Value) !*Value {
@@ -541,12 +574,12 @@ fn parseNode(vm: *Vm, node: Ast.Node.Index) ParseError!*Value {
         .pipe_colon => return vm.getUnaryPrimitive(.reverse),
         .tilde_colon => return vm.getUnaryPrimitive(.not),
 
-        .apostrophe => @panic("NYI"),
-        .apostrophe_colon => @panic("NYI"),
-        .slash => @panic("NYI"),
-        .slash_colon => @panic("NYI"),
-        .backslash => @panic("NYI"),
-        .backslash_colon => @panic("NYI"),
+        .apostrophe => return vm.getIterator(.each),
+        .apostrophe_colon => return vm.getIterator(.each_prior),
+        .slash => return vm.getIterator(.over),
+        .slash_colon => return vm.getIterator(.each_right),
+        .backslash => return vm.getIterator(.scan),
+        .backslash_colon => return vm.getIterator(.each_left),
 
         .number_literal => {
             const main_token = tree.nodeMainToken(node);
@@ -783,6 +816,7 @@ fn testVm(source: [:0]const u8, comptime tag: Value.Type, expected: anytype) !vo
         },
         .dict,
         .lambda,
+        .iterator,
         => @panic("NYI: " ++ @tagName(tag)),
     }
 }

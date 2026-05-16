@@ -24,16 +24,21 @@ pub fn deref(value: *Value, gpa: Allocator) void {
                 for (list) |v| v.deref(gpa);
                 gpa.free(list);
             },
-            .boolean => {},
-            .boolean_list => |list| gpa.free(list),
-            .long => {},
-            .long_list => |list| gpa.free(list),
-            .float => {},
-            .float_list => |list| gpa.free(list),
-            .char => {},
-            .char_list => |list| gpa.free(list),
-            .symbol => {},
-            .symbol_list => |list| gpa.free(list),
+            .boolean,
+            .long,
+            .float,
+            .char,
+            .symbol,
+            .unary_primitive,
+            .operator,
+            .iterator,
+            => {},
+            inline .boolean_list,
+            .long_list,
+            .float_list,
+            .char_list,
+            .symbol_list,
+            => |list| gpa.free(list),
             .dict => |val| {
                 val.keys.deref(gpa);
                 val.values.deref(gpa);
@@ -47,8 +52,6 @@ pub fn deref(value: *Value, gpa: Allocator) void {
                 gpa.free(val.constants);
                 gpa.free(val.source);
             },
-            .unary_primitive => {},
-            .operator => {},
             .projection => |val| {
                 val.callee.deref(gpa);
                 for (val.args) |v| v.deref(gpa);
@@ -139,6 +142,7 @@ pub fn format(self: *Value, w: *Io.Writer, vm: *Vm) !void {
         .lambda => |value| try w.print("{s}", .{value.source}),
         .unary_primitive => |value| try w.print("{f}", .{value}),
         .operator => |value| try w.print("{f}", .{value}),
+        .iterator => |value| try w.print("{f}", .{value}),
         .projection => |value| {
             try w.print("{f}", .{value.callee.alt(vm)});
             try w.writeByte('[');
@@ -184,6 +188,7 @@ pub fn count(value: *Value) usize {
         .lambda => 1,
         .unary_primitive => 1,
         .operator => 1,
+        .iterator => 1,
         .projection => 1,
     };
 }
@@ -206,6 +211,7 @@ pub fn rank(value: *Value) usize {
         .lambda => |lambda| lambda.params.len,
         .unary_primitive => 1,
         .operator => 2,
+        .iterator => 1, // TODO: Does an iterator have a fixed rank?
         .projection => |projection| projection.callee.rank(),
     };
 }
@@ -253,7 +259,7 @@ pub const Type = enum(i8) {
     lambda = 100,
     unary_primitive = 101,
     operator = 102,
-    // iterator = 103,
+    iterator = 103,
     projection = 104,
     // composition = 105,
 };
@@ -274,6 +280,7 @@ pub const Union = union(Type) {
     lambda: Lambda,
     unary_primitive: UnaryPrimitive,
     operator: Operator,
+    iterator: Iterator,
     projection: Projection,
 };
 
@@ -429,6 +436,26 @@ pub const Operator = enum {
             .file_text => try w.writeAll("0:"),
             .file_binary => try w.writeAll("1:"),
             .dynamic_load => try w.writeAll("2:"),
+        }
+    }
+};
+
+pub const Iterator = enum {
+    each, // '
+    over, // /
+    scan, // \
+    each_prior, // ':
+    each_right, // /:
+    each_left, // \:
+
+    pub fn format(self: Iterator, w: *Io.Writer) !void {
+        switch (self) {
+            .each => try w.writeByte('\''),
+            .over => try w.writeByte('/'),
+            .scan => try w.writeByte('\\'),
+            .each_prior => try w.writeAll("':"),
+            .each_right => try w.writeAll("/:"),
+            .each_left => try w.writeAll("\\:"),
         }
     }
 };

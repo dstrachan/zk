@@ -492,10 +492,10 @@ pub const Tokenizer = struct {
                 self.index += 1;
                 switch (self.buffer[self.index]) {
                     ':' => {
-                        result.tag = .bang_colon;
+                        result.tag = .apostrophe_colon;
                         continue :state .skip_colon;
                     },
-                    else => result.tag = .bang,
+                    else => result.tag = .apostrophe,
                 }
             },
             .asterisk => {

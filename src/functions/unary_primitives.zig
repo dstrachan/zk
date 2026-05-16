@@ -55,6 +55,7 @@ pub fn neg(vm: *Vm, x: *Value) !*Value {
         .lambda => return error.type,
         .unary_primitive => return error.type,
         .operator => return error.type,
+        .iterator => return error.type,
         .projection => return error.type,
     }
 }
@@ -62,21 +63,23 @@ pub fn neg(vm: *Vm, x: *Value) !*Value {
 pub fn first(vm: *Vm, x: *Value) !*Value {
     switch (x.as) {
         .list => |val| return val[0].ref(),
-        .boolean => return x.ref(),
+        .boolean,
+        .long,
+        .float,
+        .char,
+        .symbol,
+        .lambda,
+        .unary_primitive,
+        .operator,
+        .iterator,
+        .projection,
+        => return x.ref(),
         .boolean_list => |val| return vm.createValue(.boolean, val[0]),
-        .long => return x.ref(),
         .long_list => |val| return vm.createValue(.long, val[0]),
-        .float => return x.ref(),
         .float_list => |val| return vm.createValue(.float, val[0]),
-        .char => return x.ref(),
         .char_list => |val| return vm.createValue(.char, val[0]),
-        .symbol => return x.ref(),
         .symbol_list => |val| return vm.createValue(.symbol, val[0]),
         .dict => |val| return first(vm, val.values),
-        .lambda => return x.ref(),
-        .unary_primitive => return x.ref(),
-        .operator => return x.ref(),
-        .projection => return x.ref(),
     }
 }
 
@@ -130,7 +133,18 @@ pub fn string(vm: *Vm, x: *Value) !*Value {
 
 pub fn list(vm: *Vm, x: *Value) !*Value {
     switch (x.as) {
-        .list => {
+        .list,
+        .boolean_list,
+        .long_list,
+        .float_list,
+        .char_list,
+        .symbol_list,
+        .lambda,
+        .unary_primitive,
+        .operator,
+        .iterator,
+        .projection,
+        => {
             const v = try vm.allocValue(.list, 1);
             errdefer comptime unreachable;
             v.as.list[0] = x.ref();
@@ -142,22 +156,10 @@ pub fn list(vm: *Vm, x: *Value) !*Value {
             v.as.boolean_list[0] = val;
             return v;
         },
-        .boolean_list => {
-            const v = try vm.allocValue(.list, 1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
         .long => |val| {
             const v = try vm.allocValue(.long_list, 1);
             errdefer comptime unreachable;
             v.as.long_list[0] = val;
-            return v;
-        },
-        .long_list => {
-            const v = try vm.allocValue(.list, 1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
             return v;
         },
         .float => |val| {
@@ -166,22 +168,10 @@ pub fn list(vm: *Vm, x: *Value) !*Value {
             v.as.float_list[0] = val;
             return v;
         },
-        .float_list => {
-            const v = try vm.allocValue(.list, 1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
         .char => |val| {
             const v = try vm.allocValue(.char_list, 1);
             errdefer comptime unreachable;
             v.as.char_list[0] = val;
-            return v;
-        },
-        .char_list => {
-            const v = try vm.allocValue(.list, 1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
             return v;
         },
         .symbol => |val| {
@@ -190,37 +180,7 @@ pub fn list(vm: *Vm, x: *Value) !*Value {
             v.as.symbol_list[0] = val;
             return v;
         },
-        .symbol_list => {
-            const v = try vm.allocValue(.list, 1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
         .dict => return error.nyi,
-        .lambda => {
-            const v = try vm.allocValue(.list, 1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
-        .unary_primitive => {
-            const v = try vm.allocValue(.list, 1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
-        .operator => {
-            const v = try vm.allocValue(.list, 1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
-        .projection => {
-            const v = try vm.allocValue(.list, 1);
-            errdefer comptime unreachable;
-            v.as.list[0] = x.ref();
-            return v;
-        },
     }
 }
 
@@ -263,6 +223,7 @@ pub fn key(vm: *Vm, x: *Value) !*Value {
         .lambda => return error.nyi,
         .unary_primitive => return error.nyi,
         .operator => return error.nyi,
+        .iterator => return error.nyi,
         .projection => return error.nyi,
     }
 }
